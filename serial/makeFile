@@ -1,0 +1,86 @@
+# =============================================================================
+# Makefile for the 3D Poisson Solver
+#
+# Targets:
+#   all         - Build the serial solver (default)
+#   poisson     - Build the serial solver
+#   poisson-mpi - Build the MPI parallel solver (added in Task 5)
+#   tests       - Build and run the unit/verification test suite
+#   doc         - Generate Doxygen HTML documentation
+#   clean       - Remove all build artefacts
+# =============================================================================
+
+# --- Compilers & flags -------------------------------------------------------
+CXX      := g++
+MPICXX   := mpic++
+CXXFLAGS := -std=c++17 -O2 -Wall -Wextra
+LDFLAGS  := -lm
+
+# --- Directories -------------------------------------------------------------
+SRC_DIR  := src
+TEST_DIR := tests
+DOC_DIR  := doc
+BIN_DIR  := .
+
+# --- Source files ------------------------------------------------------------
+SERIAL_SRC   := $(SRC_DIR)/poisson.cpp
+MPI_SRC      := $(SRC_DIR)/poisson-mpi.cpp
+TEST_SRC     := $(TEST_DIR)/test_poisson.cpp
+
+# --- Targets -----------------------------------------------------------------
+SERIAL_BIN   := $(BIN_DIR)/poisson
+MPI_BIN      := $(BIN_DIR)/poisson-mpi
+TEST_BIN     := $(TEST_DIR)/test_poisson
+
+# =============================================================================
+# Default target
+# =============================================================================
+.PHONY: all
+all: poisson
+
+# =============================================================================
+# Serial solver
+# =============================================================================
+.PHONY: poisson
+poisson: $(SERIAL_SRC)
+	$(CXX) $(CXXFLAGS) -o $(SERIAL_BIN) $^ $(LDFLAGS)
+
+# =============================================================================
+# MPI parallel solver (Task 5)
+# =============================================================================
+.PHONY: poisson-mpi
+poisson-mpi: $(MPI_SRC)
+	$(MPICXX) $(CXXFLAGS) -o $(MPI_BIN) $^ $(LDFLAGS)
+
+# =============================================================================
+# Tests — build then run
+# =============================================================================
+.PHONY: tests
+tests: $(TEST_BIN)
+	@echo "--- Running test suite ---"
+	./$(TEST_BIN)
+
+$(TEST_BIN): $(TEST_SRC) $(SERIAL_SRC)
+	$(CXX) $(CXXFLAGS) -o $@ $(TEST_SRC) $(LDFLAGS)
+
+# =============================================================================
+# Doxygen documentation
+# =============================================================================
+.PHONY: doc
+doc:
+	@if command -v doxygen > /dev/null 2>&1; then \
+		doxygen Doxyfile; \
+		echo "Documentation generated in $(DOC_DIR)/html/index.html"; \
+	else \
+		echo "Error: doxygen not found. Please install doxygen."; \
+		exit 1; \
+	fi
+
+# =============================================================================
+# Clean
+# =============================================================================
+.PHONY: clean
+clean:
+	rm -f $(SERIAL_BIN) $(MPI_BIN) $(TEST_BIN)
+	rm -f solution.txt
+	rm -rf $(DOC_DIR)/html $(DOC_DIR)/latex
