@@ -119,20 +119,16 @@ benchmark: all
 	@echo "============================================================"
 	@echo ""
 	@echo "--- [1/4] Baseline ---"
-	time mpirun -n $(NP) ./$(BASELINE_BIN) --test $(TC) --epsilon $(EPS) \
-	    --Px $(NP) --Py 1 --Pz 1
+	@bash -c "time mpirun -n $(NP) ./$(BASELINE_BIN) --test $(TC) --epsilon $(EPS) --Px $(NP) --Py 1 --Pz 1"
 	@echo ""
 	@echo "--- [2/4] Opt1: comm/compute overlap ---"
-	time mpirun -n $(NP) ./$(OPT1_BIN) --test $(TC) --epsilon $(EPS) \
-	    --Px $(NP) --Py 1 --Pz 1
+	@bash -c "time mpirun -n $(NP) ./$(OPT1_BIN) --test $(TC) --epsilon $(EPS) --Px $(NP) --Py 1 --Pz 1"
 	@echo ""
 	@echo "--- [3/4] Opt2: Opt1 + OpenMP ($(OMP) threads/rank) ---"
-	time OMP_NUM_THREADS=$(OMP) mpirun -n $(NP) ./$(OPT2_BIN) \
-	    --test $(TC) --epsilon $(EPS) --Px $(NP) --Py 1 --Pz 1
+	@bash -c "time OMP_NUM_THREADS=$(OMP) mpirun -n $(NP) ./$(OPT2_BIN) --test $(TC) --epsilon $(EPS) --Px $(NP) --Py 1 --Pz 1"
 	@echo ""
 	@echo "--- [4/4] Opt3: Opt2 + raw-pointer + amortised residual ---"
-	time OMP_NUM_THREADS=$(OMP) mpirun -n $(NP) ./$(OPT3_BIN) \
-	    --test $(TC) --epsilon $(EPS) --Px $(NP) --Py 1 --Pz 1
+	@bash -c "time OMP_NUM_THREADS=$(OMP) mpirun -n $(NP) ./$(OPT3_BIN) --test $(TC) --epsilon $(EPS) --Px $(NP) --Py 1 --Pz 1"
 	@echo ""
 	@echo "============================================================"
 	@echo " For CSV output + plots:  bash run_benchmark.sh"
