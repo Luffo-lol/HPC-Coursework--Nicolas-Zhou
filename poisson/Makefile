@@ -12,8 +12,8 @@
 
 # --- Compilers & flags -------------------------------------------------------
 CXX      := g++
-MPICXX   := mpic++
-CXXFLAGS := -std=c++17 -O2 -Wall -Wextra
+MPICXX   := /usr/bin/mpic++
+CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -Wno-cast-function-type
 LDFLAGS  := -lm
 
 # --- Directories -------------------------------------------------------------
@@ -50,18 +50,26 @@ poisson: $(SERIAL_SRC)
 # =============================================================================
 .PHONY: poisson-mpi
 poisson-mpi: $(MPI_SRC)
-	$(MPICXX) $(CXXFLAGS) -o $(MPI_BIN) $^ $(LDFLAGS)
+	$(MPICXX) $(CXXFLAGS) -o $(MPI_BIN) $^
 
 # =============================================================================
-# Tests — build then run
+# Tests — serial unit tests
 # =============================================================================
 .PHONY: tests
 tests: $(TEST_BIN)
-	@echo "--- Running test suite ---"
+	@echo "--- Running serial test suite ---"
 	./$(TEST_BIN)
 
 $(TEST_BIN): $(TEST_SRC) $(SERIAL_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(TEST_SRC) $(LDFLAGS)
+
+# =============================================================================
+# Tests — MPI verification tests (Task 5)
+# =============================================================================
+.PHONY: tests-mpi
+tests-mpi: poisson poisson-mpi
+	@echo "--- Running MPI verification tests ---"
+	bash $(TEST_DIR)/test_mpi.sh
 
 # =============================================================================
 # Doxygen documentation

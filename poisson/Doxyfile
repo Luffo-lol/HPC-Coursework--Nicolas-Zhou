@@ -1,0 +1,29 @@
+# Doxyfile for the 3D Poisson Solver
+# Generate with: doxygen Doxyfile
+# View output:   doc/html/index.html
+
+PROJECT_NAME           = "3D Poisson Solver"
+PROJECT_BRIEF          = "Serial and parallel Jacobi solver for the 3D Poisson equation"
+PROJECT_NUMBER         = "1.0"
+
+OUTPUT_DIRECTORY       = doc
+INPUT                  = src tests
+FILE_PATTERNS          = *.cpp *.h *.hpp
+RECURSIVE              = YES
+
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+GENERATE_LATEX         = NO
+
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+
+HAVE_DOT               = NO
+
+QUIET                  = NO
+WARNINGS               = YES
+
+# Enable formula rendering in HTML
+USE_MATHJAX            = YES
+MATHJAX_FORMAT         = HTML-CSS
