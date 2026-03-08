@@ -28,7 +28,7 @@ OMP=${3:-4}
 RANK_LIST=(1 2 4 8)
 
 # --- Binaries (must be built first with: make all) ---------------------------
-BASELINE=./poisson-mpi-baseline
+BASELINE=./poisson-mpi
 OPT1=./poisson-mpi-opt1
 OPT2=./poisson-mpi-opt2
 OPT3=./poisson-mpi-opt3
