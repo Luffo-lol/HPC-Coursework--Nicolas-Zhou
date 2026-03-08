@@ -219,8 +219,8 @@ void jacobiRange(const double* __restrict__ u_ptr,
 {
     const int NY=ly+2, NZ=lz+2;
     const int rowStride=NZ, planeStride=NY*NZ;
-
-    #pragma omp parallel for schedule(static) collapse(2)
+    const int loopSize = (iHi-iLo+1)*(jHi-jLo+1)*(kHi-kLo+1);
+    #pragma omp parallel for schedule(static) collapse(2) if(loopSize >= 2000)
     for(int i=iLo;i<=iHi;++i)
       for(int j=jLo;j<=jHi;++j){
           // Pre-compute base pointers for this (i,j) row — eliminates
@@ -254,7 +254,8 @@ double localResidualSq(const double* __restrict__ u_ptr,
     const int NY=ly+2, NZ=lz+2;
     const int rowStride=NZ, planeStride=NY*NZ;
     double s=0.;
-    #pragma omp parallel for schedule(static) collapse(2) reduction(+:s)
+    const int loopSizeR = (iHi-iLo+1)*(jHi-jLo+1)*(kHi-kLo+1);
+    #pragma omp parallel for schedule(static) collapse(2) reduction(+:s) if(loopSizeR >= 2000)
     for(int i=iLo;i<=iHi;++i)
       for(int j=jLo;j<=jHi;++j){
           const double* uC  = u_ptr + i*planeStride + j*rowStride;
