@@ -1,57 +1,43 @@
 /**
- * @file poisson-mpi-opt-all.cpp
- * @brief MPI Poisson solver — all three optimisations combined (production version).
- *        This is the clean, comment-trimmed version of poisson-mpi-opt3.cpp intended
- *        to replace src/poisson-mpi.cpp for submission.
+ * @file poisson-mpi-opt2.cpp
+ * @brief MPI Poisson solver — Optimisation 2: OpenMP threading (on top of Opt1).
  *
  * ## Optimisations applied (cumulative):
  *   1. Computation/Communication Overlap  (from opt1)
- *   2. OpenMP multi-threading             (from opt2)
- *   3. Raw-pointer arithmetic in hot loop + amortised residual check  (NEW)
+ *   2. OpenMP multi-threading             (NEW in this file)
  *
- * ## What changed vs opt2
+ * ## What changed vs opt1
+ * The Jacobi sweep and residual accumulation are both embarrassingly
+ * parallel across grid points: no two interior nodes share a write target,
+ * and residual is a pure reduction.  Adding a single OpenMP directive to
+ * the outermost loop of jacobiRange() and localResidualSq() lets the OS
+ * distribute iterations across all hardware threads on the node.
  *
- * ### 3a — Raw-pointer arithmetic in the Jacobi inner loop
- * The baseline uses the helper `idx(i,j,k,NY,NZ) = i*NY*NZ + j*NZ + k`
- * inside the innermost loop.  Even though the compiler can often constant-fold
- * the outer products, it must recompute `i*NY*NZ + j*NZ` on every iteration
- * of k — unless it is clever enough to recognise the induction variable pattern.
+ *   #pragma omp parallel for schedule(static) collapse(2)
  *
- * By pre-computing the row base pointer once per (i,j) pair:
+ * `collapse(2)` fuses the i and j loops into one larger loop of
+ * iCount*jCount iterations, which gives the OpenMP runtime more chunks to
+ * distribute and avoids under-utilisation when iCount or jCount is small
+ * (e.g. when the decomposition leaves only a thin slab per rank).
  *
- *   const double* uRow  = u_ptr  + i*NY*NZ + j*NZ;
- *   const double* fRow  = f_ptr  + i*NY*NZ + j*NZ;
- *         double* nRow  = un_ptr + i*NY*NZ + j*NZ;
+ * `schedule(static)` assigns equal contiguous chunks to each thread, which
+ * is optimal here because every iteration does identical work.
  *
- * the innermost k-loop reduces to simple pointer arithmetic (uRow[k±1],
- * uRow±NZ[k], uRow±NY*NZ[k]).  This removes the multiply-add per element
- * and makes the access pattern trivially recognisable to auto-vectorisation
- * — the compiler can emit SIMD (AVX2/AVX-512) loads/stores across k.
+ * The residual loop uses `reduction(+:s)` so each thread accumulates into
+ * a private variable; the runtime sums them after the parallel region,
+ * eliminating data races and false sharing.
  *
- * The `const double* __restrict__` annotation tells the compiler the input
- * (u) and output (unew) arrays never alias, enabling further reordering.
+ * ## Why this helps
+ * Jacobi is memory-bandwidth bound.  On a modern multi-socket node each
+ * core has its own L1/L2 cache and shares L3.  Spreading the loop across
+ * all cores allows multiple cache lines to be fetched simultaneously from
+ * different memory controllers, effectively multiplying the available
+ * bandwidth.  For a 64³ grid on 8 threads, each thread works on roughly
+ * 64×64×8 points — a slice that can fit comfortably in L2, greatly
+ * reducing main-memory traffic per thread.
  *
- * ### 3b — Amortised (every-R-iterations) residual check
- * `MPI_Allreduce` is a global synchronisation barrier.  In the baseline it
- * is called once per Jacobi iteration, forcing all ranks to rendezvous even
- * though the residual changes smoothly and only needs to be tested to decide
- * whether to stop.
- *
- * We compute the residual only every R=10 iterations instead.  Between
- * checks the solver performs 10 free sweeps with zero synchronisation
- * overhead.  The final converged solution is identical (same fixed-point);
- * the solver may overshoot by at most R extra iterations, which is
- * negligible compared with the tens of thousands of iterations typically
- * required to reach epsilon=1e-8.
- *
- * Combined effect: for a 64³ grid on 8 MPI ranks x 6 threads, profiling
- * shows the Allreduce accounts for ~15–25 % of wall time.  Amortising over
- * R=10 converts that to ~2 % at the cost of ≤9 extra sweeps total.
- *
- * Compile:  mpic++ -std=c++17 -O3 -march=native -fopenmp \
- *                  -o poisson-mpi-opt3 poisson-mpi-opt3.cpp
- * Run:      OMP_NUM_THREADS=6 mpirun -n 8 ./poisson-mpi-opt3 --test 2 \
- *                  --Px 2 --Py 2 --Pz 2
+ * Compile with:  mpic++ -std=c++17 -O3 -fopenmp -o poisson-mpi-opt2 poisson-mpi-opt2.cpp
+ * Run with:      OMP_NUM_THREADS=4 mpirun -n 4 ./poisson-mpi-opt2 --test 2 --Px 2 --Py 2
  */
 
 #include <mpi.h>
@@ -209,69 +195,49 @@ void finishHaloExchange(std::vector<double>&u,int lx,int ly,int lz,HaloBuffers&h
 }
 
 // ============================================================
-// OPT3a: Raw-pointer Jacobi sweep with per-(i,j) base pointers
+// OPT2: OpenMP-parallelised Jacobi range
 // ============================================================
-void jacobiRange(const double* __restrict__ u_ptr,
-                 const double* __restrict__ f_ptr,
-                       double* __restrict__ un_ptr,
-                 int ly,int lz,
+void jacobiRange(const std::vector<double>&u,const std::vector<double>&f,
+                 std::vector<double>&unew,int ly,int lz,
                  double ihx2,double ihy2,double ihz2,double denom,
                  int iLo,int iHi,int jLo,int jHi,int kLo,int kHi)
 {
-    const int NY=ly+2, NZ=lz+2;
-    const int rowStride=NZ, planeStride=NY*NZ;
-
+    const int NY=ly+2,NZ=lz+2;
+    // collapse(2) merges i and j into one parallel loop for better load balance
     #pragma omp parallel for schedule(static) collapse(2)
     for(int i=iLo;i<=iHi;++i)
-      for(int j=jLo;j<=jHi;++j){
-          // Pre-compute base pointers for this (i,j) row — eliminates
-          // the multiply-add from the k-loop body entirely.
-          const double* uC  = u_ptr  + i*planeStride + j*rowStride; // u[i][j][*]
-          const double* uXm = uC - planeStride;   // u[i-1][j][*]
-          const double* uXp = uC + planeStride;   // u[i+1][j][*]
-          const double* uYm = uC - rowStride;     // u[i][j-1][*]
-          const double* uYp = uC + rowStride;     // u[i][j+1][*]
-          const double* fC  = f_ptr  + i*planeStride + j*rowStride;
-                double* nC  = un_ptr + i*planeStride + j*rowStride;
-
-          for(int k=kLo;k<=kHi;++k){
-              nC[k] = ( (uXp[k]+uXm[k])*ihx2
-                       +(uYp[k]+uYm[k])*ihy2
-                       +(uC[k+1]+uC[k-1])*ihz2
-                       - fC[k] ) / denom;
-          }
-      }
+      for(int j=jLo;j<=jHi;++j)
+        for(int k=kLo;k<=kHi;++k){
+            double rhs=
+                (u[idx(i+1,j,k,NY,NZ)]+u[idx(i-1,j,k,NY,NZ)])*ihx2
+               +(u[idx(i,j+1,k,NY,NZ)]+u[idx(i,j-1,k,NY,NZ)])*ihy2
+               +(u[idx(i,j,k+1,NY,NZ)]+u[idx(i,j,k-1,NY,NZ)])*ihz2
+               -f[idx(i,j,k,NY,NZ)];
+            unew[idx(i,j,k,NY,NZ)]=rhs/denom;
+        }
 }
 
 // ============================================================
-// OPT3a: Raw-pointer residual
+// OPT2: OpenMP reduction for residual
 // ============================================================
-double localResidualSq(const double* __restrict__ u_ptr,
-                       const double* __restrict__ f_ptr,
-                       int lx,int ly,int lz,
-                       double ihx2,double ihy2,double ihz2,
+double localResidualSq(const std::vector<double>&u,const std::vector<double>&f,
+                       int lx,int ly,int lz,double hx,double hy,double hz,
                        int iLo,int iHi,int jLo,int jHi,int kLo,int kHi)
 {
-    const int NY=ly+2, NZ=lz+2;
-    const int rowStride=NZ, planeStride=NY*NZ;
+    const int NY=ly+2,NZ=lz+2;
+    const double ihx2=1./(hx*hx),ihy2=1./(hy*hy),ihz2=1./(hz*hz);
     double s=0.;
     #pragma omp parallel for schedule(static) collapse(2) reduction(+:s)
     for(int i=iLo;i<=iHi;++i)
-      for(int j=jLo;j<=jHi;++j){
-          const double* uC  = u_ptr + i*planeStride + j*rowStride;
-          const double* uXm = uC - planeStride;
-          const double* uXp = uC + planeStride;
-          const double* uYm = uC - rowStride;
-          const double* uYp = uC + rowStride;
-          const double* fC  = f_ptr + i*planeStride + j*rowStride;
-          for(int k=kLo;k<=kHi;++k){
-              double lap = (uXp[k]-2*uC[k]+uXm[k])*ihx2
-                          +(uYp[k]-2*uC[k]+uYm[k])*ihy2
-                          +(uC[k+1]-2*uC[k]+uC[k-1])*ihz2;
-              double r = fC[k] - lap;
-              s += r*r;
-          }
-      }
+      for(int j=jLo;j<=jHi;++j)
+        for(int k=kLo;k<=kHi;++k){
+            double lap=
+                (u[idx(i+1,j,k,NY,NZ)]-2*u[idx(i,j,k,NY,NZ)]+u[idx(i-1,j,k,NY,NZ)])*ihx2
+               +(u[idx(i,j+1,k,NY,NZ)]-2*u[idx(i,j,k,NY,NZ)]+u[idx(i,j-1,k,NY,NZ)])*ihy2
+               +(u[idx(i,j,k+1,NY,NZ)]-2*u[idx(i,j,k,NY,NZ)]+u[idx(i,j,k-1,NY,NZ)])*ihz2;
+            double r=f[idx(i,j,k,NY,NZ)]-lap;
+            s+=r*r;
+        }
     return s;
 }
 
@@ -297,6 +263,7 @@ void writeSolution(const std::string&fn,const std::vector<double>&u,
 }
 
 int main(int argc,char*argv[]){
+    // Ensure MPI is initialised with thread support for MPI+OpenMP
     int provided;
     MPI_Init_thread(&argc,&argv,MPI_THREAD_FUNNELED,&provided);
     int rank,size;
@@ -428,69 +395,47 @@ int main(int argc,char*argv[]){
     const int jLoIn=jLo+1,jHiIn=jHi-1;
     const int kLoIn=kLo+1,kHiIn=kHi-1;
 
-    // OPT3b: only check residual every R iterations
-    constexpr int R = 10;
-
-    double residual=1e30; int iter=0;
+    double residual=0.; int iter=0;
     do {
-        // Post halos
         HaloBuffers hb = postHaloExchange(u,lx,ly,lz,cart,
                                           nbrXm,nbrXp,nbrYm,nbrYp,nbrZm,nbrZp);
 
-        // Sweep interior while comms overlap
         if(iLoIn<=iHiIn && jLoIn<=jHiIn && kLoIn<=kHiIn)
-            jacobiRange(u.data(),localF.data(),unew.data(),ly,lz,
-                        ihx2,ihy2,ihz2,denom,
+            jacobiRange(u,localF,unew,ly,lz,ihx2,ihy2,ihz2,denom,
                         iLoIn,iHiIn,jLoIn,jHiIn,kLoIn,kHiIn);
 
         finishHaloExchange(u,lx,ly,lz,hb);
 
-        // Sweep boundary shell
         if(iLo<=iHi){
-            jacobiRange(u.data(),localF.data(),unew.data(),ly,lz,ihx2,ihy2,ihz2,denom,
+            jacobiRange(u,localF,unew,ly,lz,ihx2,ihy2,ihz2,denom,
                         iLo,iLo,jLo,jHi,kLo,kHi);
             if(iHi>iLo)
-                jacobiRange(u.data(),localF.data(),unew.data(),ly,lz,ihx2,ihy2,ihz2,denom,
+                jacobiRange(u,localF,unew,ly,lz,ihx2,ihy2,ihz2,denom,
                             iHi,iHi,jLo,jHi,kLo,kHi);
         }
         if(iLoIn<=iHiIn && jLo<=jHi){
-            jacobiRange(u.data(),localF.data(),unew.data(),ly,lz,ihx2,ihy2,ihz2,denom,
+            jacobiRange(u,localF,unew,ly,lz,ihx2,ihy2,ihz2,denom,
                         iLoIn,iHiIn,jLo,jLo,kLo,kHi);
             if(jHi>jLo)
-                jacobiRange(u.data(),localF.data(),unew.data(),ly,lz,ihx2,ihy2,ihz2,denom,
+                jacobiRange(u,localF,unew,ly,lz,ihx2,ihy2,ihz2,denom,
                             iLoIn,iHiIn,jHi,jHi,kLo,kHi);
         }
         if(iLoIn<=iHiIn && jLoIn<=jHiIn && kLo<=kHi){
-            jacobiRange(u.data(),localF.data(),unew.data(),ly,lz,ihx2,ihy2,ihz2,denom,
+            jacobiRange(u,localF,unew,ly,lz,ihx2,ihy2,ihz2,denom,
                         iLoIn,iHiIn,jLoIn,jHiIn,kLo,kLo);
             if(kHi>kLo)
-                jacobiRange(u.data(),localF.data(),unew.data(),ly,lz,ihx2,ihy2,ihz2,denom,
+                jacobiRange(u,localF,unew,ly,lz,ihx2,ihy2,ihz2,denom,
                             iLoIn,iHiIn,jLoIn,jHiIn,kHi,kHi);
         }
 
         std::swap(u,unew);
-        ++iter;
 
-        // OPT3b: only pay for MPI_Allreduce every R iterations
-        if(iter % R == 0){
-            double lsq=localResidualSq(u.data(),localF.data(),lx,ly,lz,
-                                       ihx2,ihy2,ihz2,
-                                       iLo,iHi,jLo,jHi,kLo,kHi);
-            double gsq=0.;
-            MPI_Allreduce(&lsq,&gsq,1,MPI_DOUBLE,MPI_SUM,cart);
-            residual=std::sqrt(gsq);
-        }
-    } while(residual>opt.epsilon);
-
-    // Final residual (may be slightly below epsilon if we overshot)
-    {
-        double lsq=localResidualSq(u.data(),localF.data(),lx,ly,lz,
-                                   ihx2,ihy2,ihz2,
-                                   iLo,iHi,jLo,jHi,kLo,kHi);
+        double lsq=localResidualSq(u,localF,lx,ly,lz,hx,hy,hz,iLo,iHi,jLo,jHi,kLo,kHi);
         double gsq=0.;
         MPI_Allreduce(&lsq,&gsq,1,MPI_DOUBLE,MPI_SUM,cart);
         residual=std::sqrt(gsq);
-    }
+        ++iter;
+    } while(residual>opt.epsilon);
 
     {
         std::vector<double> sendBuf(ownedN);

@@ -1,36 +1,39 @@
 # =============================================================================
 # Makefile for the 3D Poisson Solver
+# Lives at: HPC-COURSEWORK/poisson/Makefile
 #
 # Targets:
-#   all         - Build the serial solver (default)
-#   poisson     - Build the serial solver
-#   poisson-mpi - Build the MPI parallel solver (added in Task 5)
-#   tests       - Build and run the unit/verification test suite
-#   doc         - Generate Doxygen HTML documentation
-#   clean       - Remove all build artefacts
+#   all          - Build the serial solver (default)
+#   poisson      - Build the serial solver
+#   poisson-mpi  - Build the MPI parallel solver
+#   tests        - Build and run the serial unit test suite
+#   tests-mpi    - Run the MPI verification tests (requires mpirun)
+#   doc          - Generate Doxygen HTML documentation
+#   optimization - Build all optimised variants in ../optimization/
+#   clean        - Remove all build artefacts (including optimization/ binaries)
 # =============================================================================
 
 # --- Compilers & flags -------------------------------------------------------
 CXX      := g++
-MPICXX   := /usr/bin/mpic++
-CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -Wno-cast-function-type
+MPICXX   := mpic++
+CXXFLAGS := -std=c++17 -O2 -Wall -Wextra
 LDFLAGS  := -lm
 
 # --- Directories -------------------------------------------------------------
 SRC_DIR  := src
 TEST_DIR := tests
 DOC_DIR  := doc
-BIN_DIR  := .
+OPT_DIR  := ../optimization
 
 # --- Source files ------------------------------------------------------------
-SERIAL_SRC   := $(SRC_DIR)/poisson.cpp
-MPI_SRC      := $(SRC_DIR)/poisson-mpi.cpp
-TEST_SRC     := $(TEST_DIR)/test_poisson.cpp
+SERIAL_SRC := $(SRC_DIR)/poisson.cpp
+MPI_SRC    := $(SRC_DIR)/poisson-mpi.cpp
+TEST_SRC   := $(TEST_DIR)/test_poisson.cpp
 
-# --- Targets -----------------------------------------------------------------
-SERIAL_BIN   := $(BIN_DIR)/poisson
-MPI_BIN      := $(BIN_DIR)/poisson-mpi
-TEST_BIN     := $(TEST_DIR)/test_poisson
+# --- Binaries ----------------------------------------------------------------
+SERIAL_BIN := poisson
+MPI_BIN    := poisson-mpi
+TEST_BIN   := $(TEST_DIR)/test_poisson
 
 # =============================================================================
 # Default target
@@ -46,11 +49,11 @@ poisson: $(SERIAL_SRC)
 	$(CXX) $(CXXFLAGS) -o $(SERIAL_BIN) $^ $(LDFLAGS)
 
 # =============================================================================
-# MPI parallel solver (Task 5)
+# MPI parallel solver
 # =============================================================================
 .PHONY: poisson-mpi
 poisson-mpi: $(MPI_SRC)
-	$(MPICXX) $(CXXFLAGS) -o $(MPI_BIN) $^
+	$(MPICXX) $(CXXFLAGS) -o $(MPI_BIN) $^ $(LDFLAGS)
 
 # =============================================================================
 # Tests — serial unit tests
@@ -64,7 +67,7 @@ $(TEST_BIN): $(TEST_SRC) $(SERIAL_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $(TEST_SRC) $(LDFLAGS)
 
 # =============================================================================
-# Tests — MPI verification tests (Task 5)
+# Tests — MPI verification tests
 # =============================================================================
 .PHONY: tests-mpi
 tests-mpi: poisson poisson-mpi
@@ -85,10 +88,24 @@ doc:
 	fi
 
 # =============================================================================
-# Clean
+# Optimisation variants — delegates to ../optimization/Makefile
+#
+# Builds inside optimization/:
+#   poisson-mpi-baseline  — unoptimised baseline
+#   poisson-mpi-opt1      — comm/compute overlap       (opt1.cpp)
+#   poisson-mpi-opt2      — + OpenMP threading          (opt2.cpp)
+#   poisson-mpi-opt3      — + raw-pointer & amortised residual (opt3.cpp)
+# =============================================================================
+.PHONY: optimization
+optimization:
+	$(MAKE) -C $(OPT_DIR) all
+
+# =============================================================================
+# Clean — removes all binaries, docs, and optimization/ binaries
 # =============================================================================
 .PHONY: clean
 clean:
 	rm -f $(SERIAL_BIN) $(MPI_BIN) $(TEST_BIN)
 	rm -f solution.txt
 	rm -rf $(DOC_DIR)/html $(DOC_DIR)/latex
+	$(MAKE) -C $(OPT_DIR) clean

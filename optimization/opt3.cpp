@@ -1,8 +1,7 @@
 /**
- * @file poisson-mpi-opt-all.cpp
- * @brief MPI Poisson solver — all three optimisations combined (production version).
- *        This is the clean, comment-trimmed version of poisson-mpi-opt3.cpp intended
- *        to replace src/poisson-mpi.cpp for submission.
+ * @file poisson-mpi-opt3.cpp
+ * @brief MPI Poisson solver — Optimisation 3: Raw-pointer hot loop + amortised residual
+ *        (on top of Opt1 + Opt2).
  *
  * ## Optimisations applied (cumulative):
  *   1. Computation/Communication Overlap  (from opt1)
