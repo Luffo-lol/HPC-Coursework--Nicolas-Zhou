@@ -4,9 +4,13 @@
 # Builds all three progressive optimisation variants.
 # Each is a self-contained version of the MPI Poisson solver:
 #
-#   opt1.cpp  — Initial implementation: blocking MPI_Sendrecv (face by face),
-#               MPI_Barrier at start of each iteration, defensive BC re-stamp
-#               before and after every sweep.
+#   baseline.cpp  — Unoptimised baseline: inner-loop divisions, double halo
+#               exchange per iteration, double MPI_Allreduce, MPI_Barrier,
+#               blocking Sendrecv face-by-face, and BC re-stamp x2.
+#
+#   opt1.cpp  — Remove double halo exchange and double Allreduce; hoist
+#               grid-spacing inverses out of inner loop.  Barrier and
+#               BC re-stamp retained.  Still uses blocking Sendrecv.
 #
 #   opt2.cpp  — Replace blocking Sendrecv with 12 simultaneous non-blocking
 #               Isend/Irecv + MPI_Waitall.  Barrier and BC re-stamp retained.
@@ -48,7 +52,7 @@ SHELL    := /bin/bash
 CXX      := mpic++
 CXXFLAGS := -std=c++17 -O3 -march=native -Wall
 
-BASELINE_SRC := ../poisson/src/poisson-mpi.cpp
+BASELINE_SRC := baseline.cpp
 OPT1_SRC     := opt1.cpp
 OPT2_SRC     := opt2.cpp
 OPT3_SRC     := opt3.cpp
@@ -111,10 +115,10 @@ benchmark: all
 	@echo " Benchmark: test $(TC)  |  $(NP) MPI rank(s)  |  epsilon=$(EPS)"
 	@echo "=================================================================="
 	@echo ""
-	@echo "--- [baseline] poisson-mpi (equivalent to opt3) ---"
+	@echo "--- [baseline] inner-loop divisions, double halo+allreduce, barrier ---"
 	bash -c 'time mpirun -n $(NP) ./$(BASELINE_BIN) --test $(TC) --epsilon $(EPS) --Px $(NP) --Py 1 --Pz 1'
 	@echo ""
-	@echo "--- [opt1] blocking Sendrecv + MPI_Barrier + BC re-stamp ---"
+	@echo "--- [opt1] hoisted constants, single halo+allreduce, blocking comms ---"
 	bash -c 'time mpirun -n $(NP) ./$(OPT1_BIN) --test $(TC) --epsilon $(EPS) --Px $(NP) --Py 1 --Pz 1'
 	@echo ""
 	@echo "--- [opt2] non-blocking Isend/Irecv, barrier + re-stamp ---"
