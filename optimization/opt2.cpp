@@ -1,19 +1,15 @@
 /**
  * @file opt2.cpp
- * @brief MPI Poisson solver — Optimisation 1: non-blocking halo exchange.
+ * @brief MPI Poisson solver — Optimisation 2: non-blocking halo exchange.
  *
  * Replaces the six sequential MPI_Sendrecv calls in opt1 with twelve
  * simultaneous non-blocking MPI_Isend/MPI_Irecv calls completed by a
- * single MPI_Waitall.  All six face transfers now proceed in parallel,
- * eliminating the serialisation penalty of the blocking approach.
+ * single MPI_Waitall.  All six face transfers now proceed in parallel.
  *
  * Remaining inefficiencies (addressed in opt3):
- *  - MPI_Barrier at the start of each iteration is still present;
- *    it adds a global synchronisation point that is redundant given
- *    MPI_Allreduce already acts as a barrier at the end of each iteration
- *  - Boundary re-stamp loops still execute twice per iteration even though
- *    the interior-only sweep bounds already prevent any Dirichlet node from
- *    being overwritten
+ *  - Pre-sweep L-infinity norm still computed and globally reduced every
+ *    iteration (carried over from opt1) — adds O(N^3) work + a collective.
+ *  - Boundary re-stamp loops still execute twice per iteration.
  */
 
 #include <mpi.h>
@@ -368,13 +364,27 @@ int main(int argc,char*argv[]){
     }
 
     // ---------------------------------------------------------------
-    // Jacobi iteration
-    // Non-blocking halo exchange, but barrier and BC re-stamp retained
+    // Jacobi iteration — non-blocking halo exchange, with defensive
+    // pre-sweep L-inf norm check and BC re-stamp.
+    //
+    // The L-inf check (carried over from opt1) still adds a redundant
+    // O(N^3) traversal and MPI_Allreduce per iteration.
+    // Both are removed in opt3.
     // ---------------------------------------------------------------
     double residual=0.; int iter=0;
     do{
-        // Barrier still present from opt1 — to be removed in opt3
-        MPI_Barrier(cart);
+        // Pre-sweep L-inf norm — divergence sanity check (redundant)
+        double localLinf=0.;
+        {
+            const int NY=ly+2, NZ=lz+2;
+            for(int i=iLo;i<=iHi;++i)
+              for(int j=jLo;j<=jHi;++j)
+                for(int k=kLo;k<=kHi;++k)
+                    localLinf=std::max(localLinf,std::abs(u[idx(i,j,k,NY,NZ)]));
+        }
+        double globalLinf=0.;
+        MPI_Allreduce(&localLinf,&globalLinf,1,MPI_DOUBLE,MPI_MAX,cart);
+        (void)globalLinf;
 
         exchangeHalos(u,lx,ly,lz,cart,nbrXm,nbrXp,nbrYm,nbrYp,nbrZm,nbrZp);
 

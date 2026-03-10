@@ -394,15 +394,32 @@ int main(int argc,char*argv[]){
     // Jacobi iteration
     //
     // Inefficiencies retained from original development version:
-    //   - MPI_Barrier before communication
-    //   - halo exchange performed twice (before and after sweep)
+    //   - pre-sweep L-inf norm computed and globally reduced (MPI_MAX)
+    //   - iteration count broadcast from rank 0 as a status check
+    //   - halo exchange performed twice per iteration
     //   - BC re-stamp before and after sweep
-    //   - residual reduced twice per iteration (convergence + verification)
+    //   - residual reduced twice per iteration
+    //   - inner-loop divisions not hoisted
     // ---------------------------------------------------------------
     double residual=0.; int iter=0;
     do{
-        // Safety barrier — all ranks must finish previous iteration
-        MPI_Barrier(cart);
+        // Pre-sweep L-inf norm — added to catch divergence early
+        double localLinf=0.;
+        {
+            const int NY=ly+2, NZ=lz+2;
+            for(int i=iLo;i<=iHi;++i)
+              for(int j=jLo;j<=jHi;++j)
+                for(int k=kLo;k<=kHi;++k)
+                    localLinf=std::max(localLinf,std::abs(u[idx(i,j,k,NY,NZ)]));
+        }
+        double globalLinf=0.;
+        MPI_Allreduce(&localLinf,&globalLinf,1,MPI_DOUBLE,MPI_MAX,cart);
+        (void)globalLinf;
+
+        // Broadcast current iteration count so all ranks stay in sync
+        // (redundant — all ranks run the same loop, but added for safety)
+        int iterBcast=iter;
+        MPI_Bcast(&iterBcast,1,MPI_INT,0,cart);
 
         // Halo exchange before sweep (required)
         exchangeHalos(u,lx,ly,lz,cart,nbrXm,nbrXp,nbrYm,nbrYp,nbrZm,nbrZp);

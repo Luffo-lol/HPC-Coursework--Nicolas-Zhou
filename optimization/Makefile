@@ -5,20 +5,18 @@
 # Each is a self-contained version of the MPI Poisson solver:
 #
 #   baseline.cpp  — Unoptimised baseline: inner-loop divisions, double halo
-#               exchange per iteration, double MPI_Allreduce, MPI_Barrier,
-#               blocking Sendrecv face-by-face, and BC re-stamp x2.
+#               exchange per iteration, double MPI_Allreduce, pre-sweep L-inf
+#               norm + MPI_Bcast of iter count, BC re-stamp x2.
 #
-#   opt1.cpp  — Remove double halo exchange and double Allreduce; hoist
-#               grid-spacing inverses out of inner loop.  Barrier and
-#               BC re-stamp retained.  Still uses blocking Sendrecv.
+#   opt1.cpp  — Hoist grid-spacing inverses; remove double halo exchange and
+#               duplicate Allreduce.  Pre-sweep L-inf norm + Allreduce(MAX)
+#               and BC re-stamp x2 retained.  Still uses blocking Sendrecv.
 #
 #   opt2.cpp  — Replace blocking Sendrecv with 12 simultaneous non-blocking
-#               Isend/Irecv + MPI_Waitall.  Barrier and BC re-stamp retained.
+#               Isend/Irecv + MPI_Waitall.  L-inf check and BC re-stamp kept.
 #
-#   opt3.cpp  — Remove MPI_Barrier and both BC re-stamp loops.  These are
-#               provably redundant: MPI_Allreduce already synchronises ranks
-#               and interior-only loop bounds prevent any Dirichlet node from
-#               being overwritten by the sweep.
+#   opt3.cpp  — Remove pre-sweep L-inf norm/Allreduce and both BC re-stamp
+#               loops.  Clean minimal iteration loop.
 #
 # Expected layout:
 #   HPC-COURSEWORK/

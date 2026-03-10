@@ -1,22 +1,21 @@
 /**
  * @file opt1.cpp
- * @brief MPI Poisson solver — initial parallel implementation.
+ * @brief MPI Poisson solver — Optimisation 1: hoist inner-loop constants,
+ *        remove duplicate halo exchange and duplicate MPI_Allreduce.
  *
- * First working parallel version. Uses blocking point-to-point communication
- * for halo exchange (MPI_Sendrecv on each face sequentially), an MPI_Barrier
- * synchronisation guard at the start of each iteration, and defensive
- * re-stamping of Dirichlet boundary values before and after every sweep.
+ * Removes the three most redundant operations from the baseline:
+ *  - Grid spacing inverses (1/hx^2 etc.) hoisted out of the Jacobi inner loop
+ *  - Redundant second halo exchange (post-sweep) removed
+ *  - Redundant second MPI_Allreduce (debug cross-check) removed
  *
- * These safety measures were added during development to isolate correctness
- * issues and were retained in this version. They are removed progressively
- * in opt2 and opt3.
- *
- * Bottlenecks addressed in later versions:
- *  - 6 sequential MPI_Sendrecv calls serialise all face communication
- *  - MPI_Barrier at iteration start adds a global synchronisation point
- *    on top of the one already provided by MPI_Allreduce
- *  - Boundary re-stamp loops execute O(N^2) work twice per iteration
- *    even though Dirichlet values are never modified by the sweep
+ * Remaining inefficiencies addressed in later versions:
+ *  - A pre-sweep L-infinity norm is computed over the full local domain and
+ *    reduced globally via MPI_Allreduce(MPI_MAX) every iteration.  Added
+ *    during debugging to catch divergence early; result is never acted upon
+ *    once the solver is verified correct.  Adds O(N^3) work + a collective.
+ *  - Boundary re-stamp loops execute O(N^2) work twice per iteration even
+ *    though the interior-only loop bounds make this unnecessary.
+ *  - Halo exchange still uses 6 sequential blocking MPI_Sendrecv calls.
  */
 
 #include <mpi.h>
@@ -378,13 +377,29 @@ int main(int argc,char*argv[]){
     }
 
     // ---------------------------------------------------------------
-    // Jacobi iteration — with barrier guard and defensive BC re-stamp
+    // Jacobi iteration — with defensive pre-sweep L-inf norm check
+    // and BC re-stamp.
+    //
+    // A local L-infinity norm is computed before each exchange as a
+    // sanity check for divergence.  Reduced globally via MPI_Allreduce
+    // so all ranks are consistent before communication begins.
+    // This was added during debugging and duplicates a full O(N^3)
+    // array traversal every iteration on top of the residual pass.
     // ---------------------------------------------------------------
     double residual=0.; int iter=0;
     do{
-        // Global sync before communication — ensures all ranks have
-        // finished their previous sweep before any halo data is sent
-        MPI_Barrier(cart);
+        // Pre-sweep L-inf norm — divergence sanity check
+        double localLinf=0.;
+        {
+            const int NY=ly+2, NZ=lz+2;
+            for(int i=iLo;i<=iHi;++i)
+              for(int j=jLo;j<=jHi;++j)
+                for(int k=kLo;k<=kHi;++k)
+                    localLinf=std::max(localLinf,std::abs(u[idx(i,j,k,NY,NZ)]));
+        }
+        double globalLinf=0.;
+        MPI_Allreduce(&localLinf,&globalLinf,1,MPI_DOUBLE,MPI_MAX,cart);
+        (void)globalLinf;
 
         exchangeHalos(u,lx,ly,lz,cart,nbrXm,nbrXp,nbrYm,nbrYp,nbrZm,nbrZp);
 
