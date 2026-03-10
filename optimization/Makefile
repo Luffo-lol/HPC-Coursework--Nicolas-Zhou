@@ -111,19 +111,23 @@ benchmark: all
 	@echo "=================================================================="
 	@echo ""
 	@echo "--- [baseline] poisson-mpi (equivalent to opt3) ---"
-	time mpirun -n $(NP) ./$(BASELINE_BIN) --test $(TC) --epsilon $(EPS) \
+	/usr/bin/time -f "  wall: %e s  (user %U s, sys %S s)" \
+	    mpirun -n $(NP) ./$(BASELINE_BIN) --test $(TC) --epsilon $(EPS) \
 	    --Px $(NP) --Py 1 --Pz 1
 	@echo ""
 	@echo "--- [opt1] blocking Sendrecv + MPI_Barrier + BC re-stamp ---"
-	time mpirun -n $(NP) ./$(OPT1_BIN) --test $(TC) --epsilon $(EPS) \
+	/usr/bin/time -f "  wall: %e s  (user %U s, sys %S s)" \
+	    mpirun -n $(NP) ./$(OPT1_BIN) --test $(TC) --epsilon $(EPS) \
 	    --Px $(NP) --Py 1 --Pz 1
 	@echo ""
 	@echo "--- [opt2] non-blocking Isend/Irecv, barrier + re-stamp ---"
-	time mpirun -n $(NP) ./$(OPT2_BIN) --test $(TC) --epsilon $(EPS) \
+	/usr/bin/time -f "  wall: %e s  (user %U s, sys %S s)" \
+	    mpirun -n $(NP) ./$(OPT2_BIN) --test $(TC) --epsilon $(EPS) \
 	    --Px $(NP) --Py 1 --Pz 1
 	@echo ""
 	@echo "--- [opt3] non-blocking, no barrier, no re-stamp (final) ---"
-	time mpirun -n $(NP) ./$(OPT3_BIN) --test $(TC) --epsilon $(EPS) \
+	/usr/bin/time -f "  wall: %e s  (user %U s, sys %S s)" \
+	    mpirun -n $(NP) ./$(OPT3_BIN) --test $(TC) --epsilon $(EPS) \
 	    --Px $(NP) --Py 1 --Pz 1
 	@echo ""
 	@echo "=================================================================="
