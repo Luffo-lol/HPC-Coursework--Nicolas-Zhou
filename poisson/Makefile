@@ -3,21 +3,34 @@
 # Lives at: HPC-COURSEWORK/poisson/Makefile
 #
 # Targets:
-#   all          - Build the serial solver (default)
-#   poisson      - Build the serial solver
-#   poisson-mpi  - Build the MPI parallel solver
-#   tests        - Build and run the serial unit test suite
-#   tests-mpi    - Run the MPI verification tests (requires mpirun)
-#   doc          - Generate Doxygen HTML documentation
-#   optimization - Build all optimised variants in ../optimization/
-#   clean        - Remove all build artefacts (including optimization/ binaries)
+#   all           - Build the serial solver (default)
+#   poisson       - Build the serial solver
+#   poisson-mpi   - Build the MPI parallel solver
+#   poisson-cuda  - Build the MPI+CUDA solver (requires CUDA toolkit)
+#   tests         - Build and run the serial unit test suite
+#   tests-mpi     - Run the MPI verification tests (requires mpirun)
+#   doc           - Generate Doxygen HTML documentation
+#   optimization  - Build all optimised variants in ../optimization/
+#   clean         - Remove all build artefacts (including optimization/ binaries)
 # =============================================================================
 
 # --- Compilers & flags -------------------------------------------------------
 CXX      := g++
 MPICXX   := mpic++
+NVCC     := nvcc
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra
 LDFLAGS  := -lm
+
+# CUDA flags — adjust -arch to match your GPU:
+#   sm_60  Pascal  (P100)
+#   sm_70  Volta   (V100)
+#   sm_80  Ampere  (A100, RTX 30xx)
+#   sm_89  Ada     (RTX 40xx)
+CUDA_ARCH   := sm_80
+NVCCFLAGS   := -O3 -arch=$(CUDA_ARCH) -std=c++17
+# Grab MPI include/lib paths from the mpic++ wrapper
+MPI_CFLAGS  := $(shell mpic++ --showme:compile 2>/dev/null)
+MPI_LDFLAGS := $(shell mpic++ --showme:libs   2>/dev/null)
 
 # --- Directories -------------------------------------------------------------
 SRC_DIR  := src
@@ -28,11 +41,13 @@ OPT_DIR  := ../optimization
 # --- Source files ------------------------------------------------------------
 SERIAL_SRC := $(SRC_DIR)/poisson.cpp
 MPI_SRC    := $(SRC_DIR)/poisson-mpi.cpp
+CUDA_SRC   := $(SRC_DIR)/poisson-cuda.cu
 TEST_SRC   := $(TEST_DIR)/test_poisson.cpp
 
 # --- Binaries ----------------------------------------------------------------
 SERIAL_BIN := poisson
 MPI_BIN    := poisson-mpi
+CUDA_BIN   := poisson-cuda
 TEST_BIN   := $(TEST_DIR)/test_poisson
 
 # =============================================================================
@@ -54,6 +69,17 @@ poisson: $(SERIAL_SRC)
 .PHONY: poisson-mpi
 poisson-mpi: $(MPI_SRC)
 	$(MPICXX) $(CXXFLAGS) -o $(MPI_BIN) $^ $(LDFLAGS)
+
+# =============================================================================
+# MPI + CUDA solver
+#
+# Uses nvcc as the compiler driver.  MPI headers and libs are obtained
+# from mpic++ --showme flags so that the same MPI installation is used.
+# The poisson-mpi target is NOT affected — it still builds without CUDA.
+# =============================================================================
+.PHONY: poisson-cuda
+poisson-cuda: $(CUDA_SRC)
+	$(NVCC) $(NVCCFLAGS) $(MPI_CFLAGS) -o $(CUDA_BIN) $^ $(MPI_LDFLAGS)
 
 # =============================================================================
 # Tests — serial unit tests
@@ -89,12 +115,6 @@ doc:
 
 # =============================================================================
 # Optimisation variants — delegates to ../optimization/Makefile
-#
-# Builds inside optimization/:
-#   poisson-mpi-baseline  — unoptimised baseline
-#   poisson-mpi-opt1      — comm/compute overlap       (opt1.cpp)
-#   poisson-mpi-opt2      — + OpenMP threading          (opt2.cpp)
-#   poisson-mpi-opt3      — + raw-pointer & amortised residual (opt3.cpp)
 # =============================================================================
 .PHONY: optimization
 optimization:
@@ -105,7 +125,7 @@ optimization:
 # =============================================================================
 .PHONY: clean
 clean:
-	rm -f $(SERIAL_BIN) $(MPI_BIN) $(TEST_BIN)
+	rm -f $(SERIAL_BIN) $(MPI_BIN) $(CUDA_BIN) $(TEST_BIN)
 	rm -f solution.txt
 	rm -rf $(DOC_DIR)/html $(DOC_DIR)/latex
 	$(MAKE) -C $(OPT_DIR) clean
