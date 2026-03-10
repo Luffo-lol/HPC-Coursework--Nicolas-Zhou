@@ -44,6 +44,7 @@
 #   python3 plot_speedup.py      # writes speedup_plot.png + walltime_plot.png
 # =============================================================================
 
+SHELL    := /bin/bash
 CXX      := mpic++
 CXXFLAGS := -std=c++17 -O3 -march=native -Wall
 
@@ -111,16 +112,16 @@ benchmark: all
 	@echo "=================================================================="
 	@echo ""
 	@echo "--- [baseline] poisson-mpi (equivalent to opt3) ---"
-	$(SHELL) -c 'time mpirun -n $(NP) ./$(BASELINE_BIN) --test $(TC) --epsilon $(EPS) --Px $(NP) --Py 1 --Pz 1'
+	bash -c 'time mpirun -n $(NP) ./$(BASELINE_BIN) --test $(TC) --epsilon $(EPS) --Px $(NP) --Py 1 --Pz 1'
 	@echo ""
 	@echo "--- [opt1] blocking Sendrecv + MPI_Barrier + BC re-stamp ---"
-	$(SHELL) -c 'time mpirun -n $(NP) ./$(OPT1_BIN) --test $(TC) --epsilon $(EPS) --Px $(NP) --Py 1 --Pz 1'
+	bash -c 'time mpirun -n $(NP) ./$(OPT1_BIN) --test $(TC) --epsilon $(EPS) --Px $(NP) --Py 1 --Pz 1'
 	@echo ""
 	@echo "--- [opt2] non-blocking Isend/Irecv, barrier + re-stamp ---"
-	$(SHELL) -c 'time mpirun -n $(NP) ./$(OPT2_BIN) --test $(TC) --epsilon $(EPS) --Px $(NP) --Py 1 --Pz 1'
+	bash -c 'time mpirun -n $(NP) ./$(OPT2_BIN) --test $(TC) --epsilon $(EPS) --Px $(NP) --Py 1 --Pz 1'
 	@echo ""
 	@echo "--- [opt3] non-blocking, no barrier, no re-stamp (final) ---"
-	$(SHELL) -c 'time mpirun -n $(NP) ./$(OPT3_BIN) --test $(TC) --epsilon $(EPS) --Px $(NP) --Py 1 --Pz 1'
+	bash -c 'time mpirun -n $(NP) ./$(OPT3_BIN) --test $(TC) --epsilon $(EPS) --Px $(NP) --Py 1 --Pz 1'
 	@echo ""
 	@echo "=================================================================="
 	@echo " For CSV output + plots:  bash run_benchmark.sh"
