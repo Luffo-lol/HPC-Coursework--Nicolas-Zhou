@@ -1,82 +1,79 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run_benchmark.sh  —  Time baseline + opt1 + opt2 + opt3 across rank counts
+# run_benchmark.sh
 #
-# Writes timing_results.csv, then run:
+# Times the baseline and all three optimisation variants across a range of
+# MPI rank counts and writes timing_results.csv for plotting with:
+#
 #   python3 plot_speedup.py
 #
 # Usage:
-#   bash run_benchmark.sh [OMP_THREADS]
-#   OMP_THREADS — threads per rank for opt2/opt3  (default: 2)
+#   bash run_benchmark.sh [TEST_CASE] [EPSILON]
 #
-# Uses test case 3 (32x64x128 = 262144 points) — large enough that OpenMP
-# and raw-pointer optimisations show a real benefit.
+#   TEST_CASE   (default 2 — 64^3 smooth solution, good timing target)
+#   EPSILON     (default 1e-6 — looser tolerance so runs finish quickly)
+#
+# Edit RANK_LIST below to match the core counts on your machine / cluster.
 # =============================================================================
-
 set -euo pipefail
 
-OMP=${1:-2}
-CSV=timing_results.csv
+TC=${1:-2}
+EPS=${2:-1e-6}
 
-# --- Edit to match your machine ----------------------------------------------
-TC=3                 # test case 3: 32x64x128 grid
-EPS=1e-5             # relaxed tolerance for faster runs
-NREPS=1              # increase to 3 for stable timings
-RANK_LIST=(1 2 4 8)  # must divide Nx=32; extend to (1 2 4 8 16 32) on big nodes
-# -----------------------------------------------------------------------------
+# Edit this list to match your available core counts
+RANK_LIST=(1 2 4 8)
 
 BASELINE=./poisson-mpi-baseline
 OPT1=./poisson-mpi-opt1
 OPT2=./poisson-mpi-opt2
 OPT3=./poisson-mpi-opt3
+CSV=timing_results.csv
 
-for b in "$BASELINE" "$OPT1" "$OPT2" "$OPT3"; do
-    [[ -x "$b" ]] || { echo "ERROR: $b not found. Run 'make all' first."; exit 1; }
-done
-
-time_run() {
-    local bin=$1 np=$2 omp=$3; shift 3
-    local wall
-    wall=$( { TIMEFORMAT='%R'; time \
-        OMP_NUM_THREADS="$omp" mpirun -n "$np" "$bin" "$@" >/dev/null 2>&1; } 2>&1 )
-    printf "%.3f" "$wall"
+check_binary() {
+    if [[ ! -x "$1" ]]; then
+        echo "ERROR: $1 not found.  Run 'make all' first." >&2
+        exit 1
+    fi
 }
 
+for b in "$BASELINE" "$OPT1" "$OPT2" "$OPT3"; do
+    check_binary "$b"
+done
+
 echo ""
-echo "============================================================"
-echo " Benchmark: test case $TC | epsilon=$EPS | OMP=$OMP"
+echo "========================================================"
+echo " Benchmark: test case $TC  |  epsilon=$EPS"
 echo " Rank counts: ${RANK_LIST[*]}"
-echo " Results -> $CSV"
-echo "============================================================"
+echo "========================================================"
 echo ""
 
 echo "ranks,variant,wall_time_s" > "$CSV"
 
 for NP in "${RANK_LIST[@]}"; do
-    MPI_ARGS=(--test "$TC" --epsilon "$EPS" --Px "$NP" --Py 1 --Pz 1)
-    echo "=== $NP rank(s) ==="
+    echo "--- $NP rank(s) ---"
 
     for variant in baseline opt1 opt2 opt3; do
         case "$variant" in
-            baseline) BIN=$BASELINE; OT=1   ;;
-            opt1)     BIN=$OPT1;     OT=1   ;;
-            opt2)     BIN=$OPT2;     OT=$OMP;;
-            opt3)     BIN=$OPT3;     OT=$OMP;;
+            baseline) BIN="$BASELINE" ;;
+            opt1)     BIN="$OPT1" ;;
+            opt2)     BIN="$OPT2" ;;
+            opt3)     BIN="$OPT3" ;;
         esac
 
-        total=0
-        for ((rep=1; rep<=NREPS; rep++)); do
-            t=$(time_run "$BIN" "$NP" "$OT" "${MPI_ARGS[@]}")
-            total=$(echo "$total + $t" | bc -l)
-        done
-        avg=$(echo "scale=3; $total / $NREPS" | bc -l)
+        MPI_ARGS=(--test "$TC" --epsilon "$EPS" --Px "$NP" --Py 1 --Pz 1)
 
-        printf "  %-10s  OMP=%-2d  %ss\n" "$variant" "$OT" "$avg"
-        echo "$NP,$variant,$avg" >> "$CSV"
+        printf "  %-10s  NP=%-3d  ... " "$variant" "$NP"
+
+        wall=$( { TIMEFORMAT='%R'; time \
+            mpirun -n "$NP" "$BIN" "${MPI_ARGS[@]}" > /dev/null 2>&1; } 2>&1 )
+
+        printf "%.3f s\n" "$wall"
+        echo "$NP,$variant,$wall" >> "$CSV"
     done
     echo ""
 done
 
-echo "============================================================"
-echo " Done.  Run: python3 plot_speedup.py"
-echo "============================================================"
+echo "========================================================"
+echo " Results written to: $CSV"
+echo " Now run:  python3 plot_speedup.py"
+echo "========================================================"

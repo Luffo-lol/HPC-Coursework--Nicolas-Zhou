@@ -1,180 +1,110 @@
 #!/usr/bin/env python3
 """
-plot_speedup.py
-===============
-Reads timing_results.csv produced by run_benchmark.sh and generates two
-publication-quality figures:
+plot_speedup.py  --  Plot speed-up and wall-time from timing_results.csv
 
-  speedup_plot.png  —  Speed-up of each variant relative to the baseline
-                        at the same rank count.  One line per variant.
-  walltime_plot.png —  Raw wall-clock time bar chart grouped by rank count.
-                        One bar per variant per rank count.
+Produces:
+  speedup_plot.png   -- speed-up of each variant relative to baseline
+  walltime_plot.png  -- raw wall-clock times grouped by rank count
 
 Usage:
     python3 plot_speedup.py [timing_results.csv]
-
-Requirements:
-    pip install matplotlib pandas numpy
 """
-
-import sys
-import os
-import csv
-import collections
+import sys, os, csv, collections
 import numpy as np
 import matplotlib
-matplotlib.use("Agg")          # no display needed
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-CSV_FILE   = sys.argv[1] if len(sys.argv) > 1 else "timing_results.csv"
-OUT_SPEED  = "speedup_plot.png"
-OUT_TIME   = "walltime_plot.png"
+CSV_FILE  = sys.argv[1] if len(sys.argv) > 1 else "timing_results.csv"
+OUT_SPEED = "speedup_plot.png"
+OUT_TIME  = "walltime_plot.png"
 
 VARIANT_LABELS = {
-    "baseline": "Baseline (no opts)",
-    "opt1":     "Opt1: comm/compute overlap",
-    "opt2":     "Opt2: Opt1 + OpenMP",
-    "opt3":     "Opt3: Opt2 + raw-ptr + amortised residual",
+    "baseline": "Baseline",
+    "opt1":     "Opt1: comm overlap",
+    "opt2":     "Opt2: + OpenMP",
+    "opt3":     "Opt3: + raw-ptr + amortised residual",
 }
-
 VARIANT_ORDER  = ["baseline", "opt1", "opt2", "opt3"]
-VARIANT_COLORS = ["#6c757d", "#0d6efd", "#198754", "#dc3545"]
+VARIANT_COLORS = ["#343a40", "#0d6efd", "#198754", "#dc3545"]
 
-# ---------------------------------------------------------------------------
-# Load data
-# ---------------------------------------------------------------------------
 if not os.path.exists(CSV_FILE):
-    print(f"ERROR: {CSV_FILE} not found.  Run run_benchmark.sh first.")
-    sys.exit(1)
+    sys.exit(f"ERROR: {CSV_FILE} not found. Run run_benchmark.sh first.")
 
-# data[ranks][variant] = wall_time (average if multiple runs)
 data = collections.defaultdict(lambda: collections.defaultdict(list))
-
 with open(CSV_FILE) as f:
-    reader = csv.DictReader(f)
-    for row in reader:
-        ranks   = int(row["ranks"])
-        variant = row["variant"].strip()
-        t       = float(row["wall_time_s"])
-        data[ranks][variant].append(t)
+    for row in csv.DictReader(f):
+        data[int(row["ranks"])][row["variant"].strip()].append(float(row["wall_time_s"]))
 
-# Average over any repeated runs
-avg = {}   # avg[ranks][variant] = mean wall time
-for ranks, vdict in data.items():
-    avg[ranks] = {}
-    for v, times in vdict.items():
-        avg[ranks][v] = np.mean(times)
+avg = {r: {v: np.mean(ts) for v, ts in vd.items()} for r, vd in data.items()}
+all_ranks    = sorted(avg)
+all_variants = [v for v in VARIANT_ORDER if any(v in avg[r] for r in all_ranks)]
 
-all_ranks    = sorted(avg.keys())
-all_variants = [v for v in VARIANT_ORDER if v in
-                set(v for vd in avg.values() for v in vd)]
+print(f"Ranks: {all_ranks}    Variants: {all_variants}")
 
-print(f"Loaded data for ranks: {all_ranks}")
-print(f"Variants found: {all_variants}")
-
-# ---------------------------------------------------------------------------
-# Figure 1 — Speed-up relative to baseline at same rank count
-# ---------------------------------------------------------------------------
-fig1, ax1 = plt.subplots(figsize=(8, 5))
-
-for vi, variant in enumerate(all_variants):
-    speedups = []
-    valid_ranks = []
+# --- Figure 1: speed-up ---
+fig, ax = plt.subplots(figsize=(8, 5))
+for vi, v in enumerate(all_variants):
+    xs, ys = [], []
     for r in all_ranks:
-        if variant in avg[r] and "baseline" in avg[r] and avg[r]["baseline"] > 0:
-            speedups.append(avg[r]["baseline"] / avg[r][variant])
-            valid_ranks.append(r)
+        if v in avg[r] and "baseline" in avg[r] and avg[r]["baseline"] > 0:
+            xs.append(r); ys.append(avg[r]["baseline"] / avg[r][v])
+    if xs:
+        ax.plot(xs, ys, marker="o", lw=2, ms=7,
+                color=VARIANT_COLORS[vi], label=VARIANT_LABELS.get(v, v))
 
-    if speedups:
-        ax1.plot(
-            valid_ranks, speedups,
-            marker="o", linewidth=2.0, markersize=7,
-            color=VARIANT_COLORS[vi],
-            label=VARIANT_LABELS.get(variant, variant),
-        )
-
-# Baseline reference line at 1.0
-ax1.axhline(1.0, color="#6c757d", linestyle="--", linewidth=1.2, label="Baseline (1.0×)")
-
-ax1.set_xlabel("Number of MPI Ranks", fontsize=12)
-ax1.set_ylabel("Speed-up  (×  relative to baseline)", fontsize=12)
-ax1.set_title("Optimisation Speed-up vs Baseline", fontsize=14, fontweight="bold")
-ax1.set_xticks(all_ranks)
-ax1.set_xticklabels([str(r) for r in all_ranks])
-ax1.legend(fontsize=9, loc="upper left")
-ax1.grid(True, linestyle=":", alpha=0.5)
-ax1.set_ylim(bottom=0)
-
-fig1.tight_layout()
-fig1.savefig(OUT_SPEED, dpi=150)
+ax.axhline(1.0, color="#6c757d", ls="--", lw=1.2, label="Baseline (1x)")
+ax.axhspan(0, 1.0, alpha=0.04, color="red")
+ax.set_xlabel("MPI Ranks", fontsize=12)
+ax.set_ylabel("Speed-up relative to baseline", fontsize=11)
+ax.set_title("Optimisation Speed-up vs Baseline", fontsize=13, fontweight="bold")
+ax.set_xticks(all_ranks)
+ax.legend(fontsize=9)
+ax.grid(True, ls=":", alpha=0.5)
+ax.set_ylim(bottom=0)
+fig.tight_layout()
+fig.savefig(OUT_SPEED, dpi=150)
 print(f"Saved: {OUT_SPEED}")
 
-# ---------------------------------------------------------------------------
-# Figure 2 — Raw wall-clock time grouped bar chart
-# ---------------------------------------------------------------------------
-fig2, ax2 = plt.subplots(figsize=(9, 5))
+# --- Figure 2: bar chart ---
+fig2, ax2 = plt.subplots(figsize=(10, 5))
+nv = len(all_variants); bw = 0.18; gap = 0.12
+xpos = np.arange(len(all_ranks)) * (nv * bw + gap)
+max_t = max(avg[r].get(v, 0) for r in all_ranks for v in all_variants)
 
-n_variants  = len(all_variants)
-n_ranks     = len(all_ranks)
-bar_width   = 0.18
-group_gap   = 0.1
-x_positions = np.arange(n_ranks) * (n_variants * bar_width + group_gap)
-
-for vi, variant in enumerate(all_variants):
-    times = [avg[r].get(variant, 0.0) for r in all_ranks]
-    offsets = x_positions + vi * bar_width
-    bars = ax2.bar(
-        offsets, times,
-        width=bar_width,
-        color=VARIANT_COLORS[vi],
-        label=VARIANT_LABELS.get(variant, variant),
-        edgecolor="white",
-        linewidth=0.5,
-    )
-    # Annotate bar tops with time in seconds
+for vi, v in enumerate(all_variants):
+    times = [avg[r].get(v, 0) for r in all_ranks]
+    offs  = xpos + vi * bw
+    bars  = ax2.bar(offs, times, width=bw, color=VARIANT_COLORS[vi],
+                    edgecolor="white", lw=0.5, label=VARIANT_LABELS.get(v, v))
     for bar, t in zip(bars, times):
         if t > 0:
-            ax2.text(
-                bar.get_x() + bar.get_width() / 2,
-                bar.get_height() + 0.002 * max(
-                    avg[r].get(v, 0) for r in all_ranks for v in all_variants
-                ),
-                f"{t:.2f}s",
-                ha="center", va="bottom", fontsize=6.5, rotation=90,
-            )
+            ax2.text(bar.get_x() + bw/2, bar.get_height() + 0.005*max_t,
+                     f"{t:.2f}s", ha="center", va="bottom", fontsize=6.5, rotation=90)
 
-# Group tick labels centred on each rank group
-group_centres = x_positions + (n_variants - 1) * bar_width / 2
-ax2.set_xticks(group_centres)
-ax2.set_xticklabels([f"{r} rank{'s' if r > 1 else ''}" for r in all_ranks], fontsize=10)
-
+centres = xpos + (nv-1)*bw/2
+ax2.set_xticks(centres)
+ax2.set_xticklabels([f"{r} rank{'s' if r>1 else ''}" for r in all_ranks], fontsize=10)
 ax2.set_ylabel("Wall-clock time (s)", fontsize=12)
-ax2.set_title("Wall-clock Time by Variant and Rank Count", fontsize=14, fontweight="bold")
-ax2.legend(fontsize=9, loc="upper right")
-ax2.grid(True, axis="y", linestyle=":", alpha=0.5)
+ax2.set_title("Wall-clock Time by Variant and Rank Count", fontsize=13, fontweight="bold")
+ax2.legend(fontsize=9)
+ax2.grid(True, axis="y", ls=":", alpha=0.5)
 ax2.set_ylim(bottom=0)
-
 fig2.tight_layout()
 fig2.savefig(OUT_TIME, dpi=150)
 print(f"Saved: {OUT_TIME}")
 
-# ---------------------------------------------------------------------------
-# Print summary table to terminal
-# ---------------------------------------------------------------------------
-print("\n" + "=" * 68)
-print(f"{'Ranks':>6}  {'Variant':<12}  {'Time (s)':>10}  {'Speed-up':>10}")
-print("-" * 68)
+# --- terminal table ---
+print("\n" + "="*64)
+print(f"{'Ranks':>6}  {'Variant':<14}  {'Time(s)':>9}  {'Speed-up':>10}")
+print("-"*64)
 for r in all_ranks:
-    baseline_t = avg[r].get("baseline", None)
+    bt = avg[r].get("baseline")
     for v in all_variants:
         t = avg[r].get(v)
-        if t is None:
-            continue
-        su = (baseline_t / t) if (baseline_t and baseline_t > 0) else float("nan")
-        print(f"{r:>6}  {v:<12}  {t:>10.3f}  {su:>10.3f}×")
+        if t is None: continue
+        su = (bt/t) if bt else float("nan")
+        flag = " <-- regression" if su < 0.98 else ""
+        print(f"{r:>6}  {v:<14}  {t:>9.3f}  {su:>9.3f}x{flag}")
     print()
-print("=" * 68)
+print("="*64)

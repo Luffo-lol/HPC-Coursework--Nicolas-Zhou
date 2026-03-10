@@ -1,32 +1,22 @@
 /**
- * @file poisson-mpi-opt1.cpp
- * @brief MPI Poisson solver — Optimisation 1: Computation/Communication Overlap.
+ * @file opt1.cpp
+ * @brief MPI Poisson solver — initial parallel implementation.
  *
- * ## Optimisation applied (on top of baseline poisson-mpi.cpp):
- *   Communication/Computation Overlap
+ * First working parallel version. Uses blocking point-to-point communication
+ * for halo exchange (MPI_Sendrecv on each face sequentially), an MPI_Barrier
+ * synchronisation guard at the start of each iteration, and defensive
+ * re-stamping of Dirichlet boundary values before and after every sweep.
  *
- * In the baseline code every iteration follows:
- *   1. MPI_Waitall (block until all 6 halos arrive)
- *   2. Jacobi sweep over ALL interior nodes
+ * These safety measures were added during development to isolate correctness
+ * issues and were retained in this version. They are removed progressively
+ * in opt2 and opt3.
  *
- * The halo faces (the 6 thin slabs of thickness 1 at each side of the local
- * block) are the ONLY nodes that actually depend on data received from
- * neighbours.  The large interior sub-block — every node at least 2 cells
- * away from any face — can be updated with values already present in the
- * local array, i.e. before the halo exchange finishes.
- *
- * The new iteration order is:
- *   1. Post all 6 Isend/Irecv (as before, non-blocking)
- *   2. Jacobi sweep over INTERIOR nodes  ← runs while comms in flight
- *   3. MPI_Waitall                        ← waits for halos to arrive
- *   4. Jacobi sweep over BOUNDARY SHELL  ← now has correct halo data
- *
- * For large grids the interior volume grows as O(N³) while the 6 boundary
- * shells grow as O(N²), so the overlap hides a large fraction of the
- * latency+bandwidth cost of the exchange behind useful compute work.
- *
- * All other logic (decomposition, BC initialisation, residual, I/O) is
- * identical to the baseline.
+ * Bottlenecks addressed in later versions:
+ *  - 6 sequential MPI_Sendrecv calls serialise all face communication
+ *  - MPI_Barrier at iteration start adds a global synchronisation point
+ *    on top of the one already provided by MPI_Allreduce
+ *  - Boundary re-stamp loops execute O(N^2) work twice per iteration
+ *    even though Dirichlet values are never modified by the sweep
  */
 
 #include <mpi.h>
@@ -85,6 +75,9 @@ public:
     }
 };
 
+// ============================================================
+// Flat index
+// ============================================================
 inline int idx(int i,int j,int k,int NY,int NZ){ return i*NY*NZ+j*NZ+k; }
 
 // ============================================================
@@ -119,6 +112,9 @@ void testCaseGrid(int tc,int&Nx,int&Ny,int&Nz){
     }
 }
 
+// ============================================================
+// Domain decomposition
+// ============================================================
 void decompose1D(int N,int P,int rank,int&start,int&count){
     int base=N/P,rem=N%P;
     start=rank*base+std::min(rank,rem);
@@ -126,76 +122,74 @@ void decompose1D(int N,int P,int rank,int&start,int&count){
 }
 
 // ============================================================
-// OPT1: Halo exchange returns requests (non-blocking).
-// Pack buffers and post all sends/recvs; caller decides when to wait.
+// Halo exchange — BLOCKING, face by face (MPI_Sendrecv)
+//
+// Each of the 6 faces is exchanged in a separate MPI_Sendrecv
+// call.  This is the simplest correct implementation but
+// serialises all inter-rank data transfers: each face exchange
+// must complete before the next can begin.
 // ============================================================
-struct HaloBuffers {
-    std::vector<double> sYm,sYp,rYm,rYp;
-    std::vector<double> sZm,sZp,rZm,rZp;
-    MPI_Request req[12];
-    int nr=0;
-};
-
-HaloBuffers postHaloExchange(std::vector<double>&u,int lx,int ly,int lz,
-                              MPI_Comm cart,
-                              int nbrXm,int nbrXp,int nbrYm,int nbrYp,
-                              int nbrZm,int nbrZp)
+void exchangeHalos(std::vector<double>&u,int lx,int ly,int lz,MPI_Comm cart,
+                   int nbrXm,int nbrXp,int nbrYm,int nbrYp,int nbrZm,int nbrZp)
 {
     const int NY=ly+2,NZ=lz+2;
     const int yFace=(lx+2)*(lz+2), zFace=(lx+2)*(ly+2);
-    HaloBuffers hb;
-    hb.sYm.resize(yFace); hb.sYp.resize(yFace);
-    hb.rYm.resize(yFace); hb.rYp.resize(yFace);
-    hb.sZm.resize(zFace); hb.sZp.resize(zFace);
-    hb.rZm.resize(zFace); hb.rZp.resize(zFace);
+    std::vector<double> sYm(yFace),sYp(yFace),rYm(yFace),rYp(yFace);
+    std::vector<double> sZm(zFace),sZp(zFace),rZm(zFace),rZp(zFace);
 
     for(int i=0;i<=lx+1;++i) for(int k=0;k<=lz+1;++k){
-        hb.sYm[i*(lz+2)+k]=u[idx(i,1, k,NY,NZ)];
-        hb.sYp[i*(lz+2)+k]=u[idx(i,ly,k,NY,NZ)];
+        sYm[i*(lz+2)+k]=u[idx(i,1, k,NY,NZ)];
+        sYp[i*(lz+2)+k]=u[idx(i,ly,k,NY,NZ)];
     }
     for(int i=0;i<=lx+1;++i) for(int j=0;j<=ly+1;++j){
-        hb.sZm[i*(ly+2)+j]=u[idx(i,j,1, NY,NZ)];
-        hb.sZp[i*(ly+2)+j]=u[idx(i,j,lz,NY,NZ)];
+        sZm[i*(ly+2)+j]=u[idx(i,j,1, NY,NZ)];
+        sZp[i*(ly+2)+j]=u[idx(i,j,lz,NY,NZ)];
     }
 
-    const int TAG=0; int&nr=hb.nr;
-    MPI_Isend(&u[idx(1,   0,0,NY,NZ)],NY*NZ,MPI_DOUBLE,nbrXm,TAG,cart,&hb.req[nr++]);
-    MPI_Irecv(&u[idx(0,   0,0,NY,NZ)],NY*NZ,MPI_DOUBLE,nbrXm,TAG,cart,&hb.req[nr++]);
-    MPI_Isend(&u[idx(lx,  0,0,NY,NZ)],NY*NZ,MPI_DOUBLE,nbrXp,TAG,cart,&hb.req[nr++]);
-    MPI_Irecv(&u[idx(lx+1,0,0,NY,NZ)],NY*NZ,MPI_DOUBLE,nbrXp,TAG,cart,&hb.req[nr++]);
-    MPI_Isend(hb.sYm.data(),yFace,MPI_DOUBLE,nbrYm,TAG,cart,&hb.req[nr++]);
-    MPI_Irecv(hb.rYm.data(),yFace,MPI_DOUBLE,nbrYm,TAG,cart,&hb.req[nr++]);
-    MPI_Isend(hb.sYp.data(),yFace,MPI_DOUBLE,nbrYp,TAG,cart,&hb.req[nr++]);
-    MPI_Irecv(hb.rYp.data(),yFace,MPI_DOUBLE,nbrYp,TAG,cart,&hb.req[nr++]);
-    MPI_Isend(hb.sZm.data(),zFace,MPI_DOUBLE,nbrZm,TAG,cart,&hb.req[nr++]);
-    MPI_Irecv(hb.rZm.data(),zFace,MPI_DOUBLE,nbrZm,TAG,cart,&hb.req[nr++]);
-    MPI_Isend(hb.sZp.data(),zFace,MPI_DOUBLE,nbrZp,TAG,cart,&hb.req[nr++]);
-    MPI_Irecv(hb.rZp.data(),zFace,MPI_DOUBLE,nbrZp,TAG,cart,&hb.req[nr++]);
-    return hb;
-}
+    const int TAG=0;
 
-void finishHaloExchange(std::vector<double>&u,int lx,int ly,int lz,HaloBuffers&hb){
-    const int NY=ly+2,NZ=lz+2;
-    MPI_Waitall(hb.nr,hb.req,MPI_STATUSES_IGNORE);
+    // Sequential face exchanges — each blocks until both send and recv complete
+    MPI_Sendrecv(&u[idx(1,   0,0,NY,NZ)],NY*NZ,MPI_DOUBLE,nbrXm,TAG,
+                 &u[idx(0,   0,0,NY,NZ)],NY*NZ,MPI_DOUBLE,nbrXm,TAG,
+                 cart,MPI_STATUS_IGNORE);
+    MPI_Sendrecv(&u[idx(lx,  0,0,NY,NZ)],NY*NZ,MPI_DOUBLE,nbrXp,TAG,
+                 &u[idx(lx+1,0,0,NY,NZ)],NY*NZ,MPI_DOUBLE,nbrXp,TAG,
+                 cart,MPI_STATUS_IGNORE);
+    MPI_Sendrecv(sYm.data(),yFace,MPI_DOUBLE,nbrYm,TAG,
+                 rYm.data(),yFace,MPI_DOUBLE,nbrYm,TAG,
+                 cart,MPI_STATUS_IGNORE);
+    MPI_Sendrecv(sYp.data(),yFace,MPI_DOUBLE,nbrYp,TAG,
+                 rYp.data(),yFace,MPI_DOUBLE,nbrYp,TAG,
+                 cart,MPI_STATUS_IGNORE);
+    MPI_Sendrecv(sZm.data(),zFace,MPI_DOUBLE,nbrZm,TAG,
+                 rZm.data(),zFace,MPI_DOUBLE,nbrZm,TAG,
+                 cart,MPI_STATUS_IGNORE);
+    MPI_Sendrecv(sZp.data(),zFace,MPI_DOUBLE,nbrZp,TAG,
+                 rZp.data(),zFace,MPI_DOUBLE,nbrZp,TAG,
+                 cart,MPI_STATUS_IGNORE);
+
     for(int i=0;i<=lx+1;++i) for(int k=0;k<=lz+1;++k){
-        u[idx(i,0,   k,NY,NZ)]=hb.rYm[i*(lz+2)+k];
-        u[idx(i,ly+1,k,NY,NZ)]=hb.rYp[i*(lz+2)+k];
+        u[idx(i,0,   k,NY,NZ)]=rYm[i*(lz+2)+k];
+        u[idx(i,ly+1,k,NY,NZ)]=rYp[i*(lz+2)+k];
     }
     for(int i=0;i<=lx+1;++i) for(int j=0;j<=ly+1;++j){
-        u[idx(i,j,0,   NY,NZ)]=hb.rZm[i*(ly+2)+j];
-        u[idx(i,j,lz+1,NY,NZ)]=hb.rZp[i*(ly+2)+j];
+        u[idx(i,j,0,   NY,NZ)]=rZm[i*(ly+2)+j];
+        u[idx(i,j,lz+1,NY,NZ)]=rZp[i*(ly+2)+j];
     }
 }
 
 // ============================================================
-// Jacobi sweep over an arbitrary sub-range [iLo..iHi] x [jLo..jHi] x [kLo..kHi]
+// Jacobi sweep
 // ============================================================
-void jacobiRange(const std::vector<double>&u,const std::vector<double>&f,
-                 std::vector<double>&unew,int ly,int lz,
-                 double ihx2,double ihy2,double ihz2,double denom,
-                 int iLo,int iHi,int jLo,int jHi,int kLo,int kHi)
+void localJacobiSweep(const std::vector<double>&u,const std::vector<double>&f,
+                      std::vector<double>&unew,int lx,int ly,int lz,
+                      double hx,double hy,double hz,
+                      int iLo,int iHi,int jLo,int jHi,int kLo,int kHi)
 {
+    (void)lx;
     const int NY=ly+2,NZ=lz+2;
+    const double ihx2=1./(hx*hx),ihy2=1./(hy*hy),ihz2=1./(hz*hz);
+    const double denom=2.*(ihx2+ihy2+ihz2);
     for(int i=iLo;i<=iHi;++i)
       for(int j=jLo;j<=jHi;++j)
         for(int k=kLo;k<=kHi;++k){
@@ -208,10 +202,14 @@ void jacobiRange(const std::vector<double>&u,const std::vector<double>&f,
         }
 }
 
+// ============================================================
+// Residual
+// ============================================================
 double localResidualSq(const std::vector<double>&u,const std::vector<double>&f,
                        int lx,int ly,int lz,double hx,double hy,double hz,
                        int iLo,int iHi,int jLo,int jHi,int kLo,int kHi)
 {
+    (void)lx;
     const int NY=ly+2,NZ=lz+2;
     const double ihx2=1./(hx*hx),ihy2=1./(hy*hy),ihz2=1./(hz*hz);
     double s=0.;
@@ -229,7 +227,7 @@ double localResidualSq(const std::vector<double>&u,const std::vector<double>&f,
 }
 
 // ============================================================
-// I/O
+// I/O (rank 0 only)
 // ============================================================
 void readForcingFile(const std::string&fn,int&Nx,int&Ny,int&Nz,std::vector<double>&f){
     std::ifstream fin(fn);
@@ -310,7 +308,6 @@ int main(int argc,char*argv[]){
     const int LNY=ly+2,LNZ=lz+2;
     const int localN=(lx+2)*LNY*LNZ, ownedN=lx*ly*lz;
 
-    // Scatter forcing
     std::vector<double> localF(localN,0.);
     {
         if(rank==0){
@@ -345,7 +342,6 @@ int main(int argc,char*argv[]){
     const int kLo=bndZm?2:1, kHi=bndZp?lz-1:lz;
 
     std::vector<double> u(localN,0.),unew(localN,0.);
-
     auto bcVal=[&](int gi,int gj,int gk)->double{
         double x=gi*hx,y=gj*hy,z=gk*hz;
         return hasTest?exactSolution(opt.test,x,y,z):0.;
@@ -381,62 +377,49 @@ int main(int argc,char*argv[]){
         u[idx(i,j,lz+1,LNY,LNZ)]=unew[idx(i,j,lz+1,LNY,LNZ)]=v;
     }
 
-    // Precompute stencil coefficients (unchanged per iteration)
-    const double ihx2=1./(hx*hx),ihy2=1./(hy*hy),ihz2=1./(hz*hz);
-    const double denom=2.*(ihx2+ihy2+ihz2);
-
-    // ----------------------------------------------------------------
-    // OPT1: Interior/boundary split for overlap
-    // Interior = nodes at distance >= 2 from any face (no halo dependency)
-    // Boundary shell = nodes at distance == 1 from any face (need halo)
-    // ----------------------------------------------------------------
-    const int iLoIn = iLo+1, iHiIn = iHi-1;
-    const int jLoIn = jLo+1, jHiIn = jHi-1;
-    const int kLoIn = kLo+1, kHiIn = kHi-1;
-    // (If the sub-block is too small the interior range may be empty — that is fine,
-    //  jacobiRange will simply do nothing for an inverted range.)
-
+    // ---------------------------------------------------------------
+    // Jacobi iteration — with barrier guard and defensive BC re-stamp
+    // ---------------------------------------------------------------
     double residual=0.; int iter=0;
-    do {
-        // 1. Post all non-blocking sends/recvs
-        HaloBuffers hb = postHaloExchange(u,lx,ly,lz,cart,
-                                          nbrXm,nbrXp,nbrYm,nbrYp,nbrZm,nbrZp);
+    do{
+        // Global sync before communication — ensures all ranks have
+        // finished their previous sweep before any halo data is sent
+        MPI_Barrier(cart);
 
-        // 2. Sweep interior (no halo data needed) while comms in flight
-        if(iLoIn<=iHiIn && jLoIn<=jHiIn && kLoIn<=kHiIn)
-            jacobiRange(u,localF,unew,ly,lz,ihx2,ihy2,ihz2,denom,
-                        iLoIn,iHiIn,jLoIn,jHiIn,kLoIn,kHiIn);
+        exchangeHalos(u,lx,ly,lz,cart,nbrXm,nbrXp,nbrYm,nbrYp,nbrZm,nbrZp);
 
-        // 3. Wait for halos and unpack
-        finishHaloExchange(u,lx,ly,lz,hb);
+        // Re-stamp Dirichlet nodes before sweep (defensive: halo exchange
+        // should not have corrupted these, but this guarantees correctness)
+        if(bndXm) for(int j=1;j<=ly;++j) for(int k=1;k<=lz;++k)
+            u[idx(1,j,k,LNY,LNZ)]=bcVal(gxs,gys+j-1,gzs+k-1);
+        if(bndXp) for(int j=1;j<=ly;++j) for(int k=1;k<=lz;++k)
+            u[idx(lx,j,k,LNY,LNZ)]=bcVal(gxs+lx-1,gys+j-1,gzs+k-1);
+        if(bndYm) for(int i=1;i<=lx;++i) for(int k=1;k<=lz;++k)
+            u[idx(i,1,k,LNY,LNZ)]=bcVal(gxs+i-1,gys,gzs+k-1);
+        if(bndYp) for(int i=1;i<=lx;++i) for(int k=1;k<=lz;++k)
+            u[idx(i,ly,k,LNY,LNZ)]=bcVal(gxs+i-1,gys+ly-1,gzs+k-1);
+        if(bndZm) for(int i=1;i<=lx;++i) for(int j=1;j<=ly;++j)
+            u[idx(i,j,1,LNY,LNZ)]=bcVal(gxs+i-1,gys+j-1,gzs);
+        if(bndZp) for(int i=1;i<=lx;++i) for(int j=1;j<=ly;++j)
+            u[idx(i,j,lz,LNY,LNZ)]=bcVal(gxs+i-1,gys+j-1,gzs+lz-1);
 
-        // 4. Sweep the six boundary shells (now have correct halo data)
-        // X-faces
-        if(iLo<=iHi){
-            jacobiRange(u,localF,unew,ly,lz,ihx2,ihy2,ihz2,denom,
-                        iLo,iLo,jLo,jHi,kLo,kHi);
-            if(iHi>iLo)
-                jacobiRange(u,localF,unew,ly,lz,ihx2,ihy2,ihz2,denom,
-                            iHi,iHi,jLo,jHi,kLo,kHi);
-        }
-        // Y-faces (excluding corners already covered by X)
-        if(iLoIn<=iHiIn && jLo<=jHi){
-            jacobiRange(u,localF,unew,ly,lz,ihx2,ihy2,ihz2,denom,
-                        iLoIn,iHiIn,jLo,jLo,kLo,kHi);
-            if(jHi>jLo)
-                jacobiRange(u,localF,unew,ly,lz,ihx2,ihy2,ihz2,denom,
-                            iLoIn,iHiIn,jHi,jHi,kLo,kHi);
-        }
-        // Z-faces (excluding edges already covered)
-        if(iLoIn<=iHiIn && jLoIn<=jHiIn && kLo<=kHi){
-            jacobiRange(u,localF,unew,ly,lz,ihx2,ihy2,ihz2,denom,
-                        iLoIn,iHiIn,jLoIn,jHiIn,kLo,kLo);
-            if(kHi>kLo)
-                jacobiRange(u,localF,unew,ly,lz,ihx2,ihy2,ihz2,denom,
-                            iLoIn,iHiIn,jLoIn,jHiIn,kHi,kHi);
-        }
-
+        localJacobiSweep(u,localF,unew,lx,ly,lz,hx,hy,hz,iLo,iHi,jLo,jHi,kLo,kHi);
         std::swap(u,unew);
+
+        // Re-stamp after swap — sweep writes to unew which is now u;
+        // stamp again to ensure BCs are clean before residual check
+        if(bndXm) for(int j=1;j<=ly;++j) for(int k=1;k<=lz;++k)
+            u[idx(1,j,k,LNY,LNZ)]=bcVal(gxs,gys+j-1,gzs+k-1);
+        if(bndXp) for(int j=1;j<=ly;++j) for(int k=1;k<=lz;++k)
+            u[idx(lx,j,k,LNY,LNZ)]=bcVal(gxs+lx-1,gys+j-1,gzs+k-1);
+        if(bndYm) for(int i=1;i<=lx;++i) for(int k=1;k<=lz;++k)
+            u[idx(i,1,k,LNY,LNZ)]=bcVal(gxs+i-1,gys,gzs+k-1);
+        if(bndYp) for(int i=1;i<=lx;++i) for(int k=1;k<=lz;++k)
+            u[idx(i,ly,k,LNY,LNZ)]=bcVal(gxs+i-1,gys+ly-1,gzs+k-1);
+        if(bndZm) for(int i=1;i<=lx;++i) for(int j=1;j<=ly;++j)
+            u[idx(i,j,1,LNY,LNZ)]=bcVal(gxs+i-1,gys+j-1,gzs);
+        if(bndZp) for(int i=1;i<=lx;++i) for(int j=1;j<=ly;++j)
+            u[idx(i,j,lz,LNY,LNZ)]=bcVal(gxs+i-1,gys+j-1,gzs+lz-1);
 
         double lsq=localResidualSq(u,localF,lx,ly,lz,hx,hy,hz,iLo,iHi,jLo,jHi,kLo,kHi);
         double gsq=0.;
@@ -450,7 +433,6 @@ int main(int argc,char*argv[]){
         std::vector<double> sendBuf(ownedN);
         {int off=0; for(int i=0;i<lx;++i) for(int j=0;j<ly;++j) for(int k=0;k<lz;++k)
             sendBuf[off++]=u[idx(i+1,j+1,k+1,LNY,LNZ)];}
-
         if(rank==0){
             std::vector<double> globalU(Nx*Ny*Nz,0.);
             for(int i=0;i<lx;++i) for(int j=0;j<ly;++j) for(int k=0;k<lz;++k)
