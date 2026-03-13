@@ -4,7 +4,7 @@
  *        This is the clean, comment-trimmed version of poisson-mpi-opt3.cpp intended
  *        to replace src/poisson-mpi.cpp for submission.
  *
- * ## Optimisations applied (cumulative):
+ * ## Optimisations applied:
  *   1. Computation/Communication Overlap  (from opt1)
  *   2. OpenMP multi-threading             (from opt2)
  *   3. Raw-pointer arithmetic in hot loop + amortised residual check  (NEW)
