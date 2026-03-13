@@ -26,18 +26,12 @@ LDFLAGS  := -lm
 #   sm_70  Volta   (V100)
 #   sm_80  Ampere  (A100, RTX 30xx)
 #   sm_89  Ada     (RTX 40xx)
-CUDA_ARCH := sm_80
-NVCCFLAGS := -O3 -arch=$(CUDA_ARCH) -std=c++17 \
-             -allow-unsupported-compiler \
-             --compiler-bindir /usr/bin/gcc-12
-
-# CUDA runtime library path (from cuda-hpc-sdk/24.9)
-CUDA_LIB  := /apps/cuda-hpc-sdk/24.9/Linux_x86_64/24.9/cuda/12.6/targets/x86_64-linux/lib
-
-# MPI include paths only (safe to pass directly to nvcc as -I flags)
+CUDA_ARCH   := sm_80
+NVCCFLAGS   := -O3 -arch=$(CUDA_ARCH) -std=c++17 -allow-unsupported-compiler --compiler-bindir /usr/bin/gcc-12
+# Grab MPI include/lib paths from the mpic++ wrapper
 MPI_INCS    := $(addprefix -I,$(shell mpic++ --showme:incdirs 2>/dev/null))
-# Full compile flags (may contain -pthread etc — passed via -Xcompiler)
 MPI_CFLAGS  := $(shell mpic++ --showme:compile 2>/dev/null)
+MPI_LDFLAGS := $(shell mpic++ --showme:link   2>/dev/null)
 
 # --- Directories -------------------------------------------------------------
 SRC_DIR  := src
@@ -80,20 +74,14 @@ poisson-mpi: $(MPI_SRC)
 # =============================================================================
 # MPI + CUDA solver
 #
-# Two-step build:
-#   1. nvcc compiles the .cu to an object file using gcc-12 as host compiler
-#      (nvcc 12.6 does not support gcc-14 which is the system default).
-#      MPI headers are passed as -I flags; -pthread via -Xcompiler.
-#   2. mpic++ links the object with the CUDA runtime library.
-#      -L and -rpath point at the cuda-hpc-sdk cudart location.
-#
+# Uses nvcc as the compiler driver.  MPI headers and libs are obtained
+# from mpic++ --showme flags so that the same MPI installation is used.
 # The poisson-mpi target is NOT affected — it still builds without CUDA.
 # =============================================================================
 .PHONY: poisson-cuda
 poisson-cuda: $(CUDA_SRC)
 	$(NVCC) $(NVCCFLAGS) $(MPI_INCS) -Xcompiler "-pthread" -c $^ -o poisson-cuda.o
-	$(MPICXX) -o $(CUDA_BIN) poisson-cuda.o \
-	    -L$(CUDA_LIB) -lcudart -Wl,-rpath,$(CUDA_LIB)
+	$(MPICXX) -o $(CUDA_BIN) poisson-cuda.o -L/apps/cuda-hpc-sdk/24.9/Linux_x86_64/24.9/cuda/12.6/targets/x86_64-linux/lib -lcudart -Wl,-rpath,/apps/cuda-hpc-sdk/24.9/Linux_x86_64/24.9/cuda/12.6/targets/x86_64-linux/lib
 
 # =============================================================================
 # Tests — serial unit tests
@@ -135,11 +123,11 @@ optimization:
 	$(MAKE) -C $(OPT_DIR) all
 
 # =============================================================================
-# Clean — removes all binaries, docs, optimization/ binaries, and CUDA objects
+# Clean — removes all binaries, docs, and optimization/ binaries
 # =============================================================================
 .PHONY: clean
 clean:
-	rm -f $(SERIAL_BIN) $(MPI_BIN) $(CUDA_BIN) $(TEST_BIN) poisson-cuda.o
+	rm -f $(SERIAL_BIN) $(MPI_BIN) $(CUDA_BIN) $(TEST_BIN)
 	rm -f solution.txt
 	rm -rf $(DOC_DIR)/html $(DOC_DIR)/latex
 	$(MAKE) -C $(OPT_DIR) clean
