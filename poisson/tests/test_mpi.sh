@@ -1,5 +1,4 @@
 #!/bin/bash
-# =============================================================================
 # test_mpi.sh  —  Verification tests for the MPI Poisson solver
 #
 # Runs the three verification cases with multiple decompositions and compares
@@ -12,14 +11,13 @@
 #   - ./poisson       (serial binary, built with 'make poisson')
 #   - ./poisson-mpi   (MPI binary,    built with 'make poisson-mpi')
 #   - mpirun / mpiexec
-# =============================================================================
 
 set -e
 PASS=0
 FAIL=0
 TOLERANCE=1e-6      # max L∞ difference between serial and parallel solutions
 
-# ---- helpers ----------------------------------------------------------------
+# helpers
 
 check() {
     local desc="$1"
@@ -62,7 +60,7 @@ else:
 PYEOF
 }
 
-# ---- test function ----------------------------------------------------------
+#test function
 
 run_test() {
     local tc="$1"       # test case number
@@ -90,7 +88,7 @@ run_test() {
     fi
 }
 
-# ---- validate bad decomposition exits with error ----------------------------
+#validate bad decomposition exits with error
 
 echo ""
 echo "[Decomposition validation]"
@@ -100,7 +98,7 @@ else
     check "Px*Py*Pz != P is rejected" "FAIL"
 fi
 
-# ---- run verification cases with various decompositions ---------------------
+# run verification cases with various decompositions
 # (only run if small enough for quick CI; skip 64³ on >8 ranks)
 
 run_test 1  1 1 1    # serial-equivalent
@@ -114,11 +112,9 @@ run_test 2  2 2 2
 
 run_test 3  2 2 2
 
-# ---- summary ----------------------------------------------------------------
+# summary 
 
 echo ""
-echo "========================================"
 echo " MPI Test Results: $PASS passed, $FAIL failed"
-echo "========================================"
 
 [ "$FAIL" -eq 0 ]    # exit 0 iff all passed

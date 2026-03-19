@@ -7,7 +7,7 @@
  * with Dirichlet boundary conditions, using a second-order finite difference
  * discretisation and Jacobi iteration.
  *
- * @author HPC Assignment
+ * @author Nicolas Zhou
  */
 
 #include <iostream>
@@ -19,9 +19,7 @@
 #include <string>
 #include <iomanip>
 
-// ============================================================
 // Command-line argument parsing (lightweight, no Boost needed)
-// ============================================================
 
 /**
  * @brief Simple command-line option parser.
@@ -84,9 +82,7 @@ public:
     }
 };
 
-// ============================================================
 // Grid helper — maps 3D index (i,j,k) to 1D flat index
-// ============================================================
 
 /**
  * @brief Inline 3-D to 1-D index mapping (row-major, k fastest).
@@ -101,9 +97,7 @@ inline int idx(int i, int j, int k, int Ny, int Nz) {
     return i * Ny * Nz + j * Nz + k;
 }
 
-// ============================================================
 // Forcing function definitions for built-in test cases
-// ============================================================
 
 /**
  * @brief Exact solution for test cases that have one.
@@ -140,9 +134,7 @@ double forcingFunction(int tc, double x, double y, double z) {
     }
 }
 
-// ============================================================
 // Grid dimensions for each built-in test case
-// ============================================================
 
 /**
  * @brief Return the prescribed grid dimensions for a built-in test case.
@@ -160,10 +152,7 @@ void testCaseGrid(int tc, int &Nx, int &Ny, int &Nz) {
     }
 }
 
-// ============================================================
 // Core solver
-// ============================================================
-
 /**
  * @brief Perform a single Jacobi sweep over all interior grid points.
  *
@@ -244,9 +233,7 @@ double computeResidual(const std::vector<double>& u,
     return std::sqrt(sumSq);
 }
 
-// ============================================================
 // I/O helpers
-// ============================================================
 
 /**
  * @brief Read the forcing function from a text file.
@@ -314,9 +301,7 @@ void writeSolution(const std::string& filename,
                      << u[idx(i,j,k,Ny,Nz)] << "\n";
 }
 
-// ============================================================
 // Main
-// ============================================================
 
 /**
  * @brief Program entry point.
@@ -378,11 +363,11 @@ int main(int argc, char* argv[]) {
     double hz = 1.0 / (Nz - 1);
     int N = Nx * Ny * Nz;
 
-    // ---- Allocate solution arrays ----
+    //  Allocate solution arrays 
     std::vector<double> u(N, 0.0);
     std::vector<double> unew(N, 0.0);
 
-    // ---- Apply Dirichlet boundary conditions ----
+    // Apply Dirichlet boundary conditions 
     // For test cases 1–3 use the exact solution; otherwise u=0 on boundary.
     auto applyBC = [&](std::vector<double>& vec) {
         for (int i = 0; i < Nx; ++i) {
@@ -404,7 +389,7 @@ int main(int argc, char* argv[]) {
     applyBC(u);
     applyBC(unew);
 
-    // ---- Jacobi iteration ----
+    //  Jacobi iteration 
     double residual = 0.0;
     int iter = 0;
     do {
@@ -416,7 +401,7 @@ int main(int argc, char* argv[]) {
         ++iter;
     } while (residual > opt.epsilon);
 
-    // ---- Output ----
+    //  Output 
     writeSolution("solution.txt", u, Nx, Ny, Nz, hx, hy, hz);
     std::cout << std::scientific << std::setprecision(6)
               << "Final residual: " << residual

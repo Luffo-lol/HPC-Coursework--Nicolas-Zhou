@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# =============================================================================
+
 # run_benchmark.sh
 #
 # Times the baseline and all three optimisation variants across a range of
@@ -14,7 +14,6 @@
 #   EPSILON     (default 1e-6 — looser tolerance so runs finish quickly)
 #
 # Edit RANK_LIST below to match the core counts on your machine / cluster.
-# =============================================================================
 set -euo pipefail
 
 TC=${1:-2}
@@ -41,7 +40,7 @@ for b in "$BASELINE" "$OPT1" "$OPT2" "$OPT3"; do
 done
 
 echo ""
-echo "========================================================"
+echo "_______________________________________"
 echo " Benchmark: test case $TC  |  epsilon=$EPS"
 echo " Rank counts: ${RANK_LIST[*]}"
 echo "========================================================"
@@ -76,4 +75,4 @@ done
 echo "========================================================"
 echo " Results written to: $CSV"
 echo " Now run:  python3 plot_speedup.py"
-echo "========================================================"
+echo "_______________________________________"

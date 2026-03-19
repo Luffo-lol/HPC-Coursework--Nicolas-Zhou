@@ -40,9 +40,9 @@
 #include <iomanip>
 #include <algorithm>
 
-// ============================================================
+
 // Options
-// ============================================================
+
 class Options {
 public:
     bool        help    = false;
@@ -86,14 +86,14 @@ public:
     }
 };
 
-// ============================================================
+
 // Flat index
-// ============================================================
+
 inline int idx(int i,int j,int k,int NY,int NZ){ return i*NY*NZ+j*NZ+k; }
 
-// ============================================================
+
 // Test cases
-// ============================================================
+
 double exactSolution(int tc,double x,double y,double z){
     switch(tc){
         case 1: return x*x+y*y+z*z;
@@ -123,18 +123,18 @@ void testCaseGrid(int tc,int&Nx,int&Ny,int&Nz){
     }
 }
 
-// ============================================================
+
 // Domain decomposition
-// ============================================================
+
 void decompose1D(int N,int P,int rank,int&start,int&count){
     int base=N/P,rem=N%P;
     start=rank*base+std::min(rank,rem);
     count=base+(rank<rem?1:0);
 }
 
-// ============================================================
+
 // Halo exchange — BLOCKING, face by face (MPI_Sendrecv)
-// ============================================================
+
 void exchangeHalos(std::vector<double>&u,int lx,int ly,int lz,MPI_Comm cart,
                    int nbrXm,int nbrXp,int nbrYm,int nbrYp,int nbrZm,int nbrZp)
 {
@@ -182,13 +182,10 @@ void exchangeHalos(std::vector<double>&u,int lx,int ly,int lz,MPI_Comm cart,
     }
 }
 
-// ============================================================
+
 // Jacobi sweep — grid spacing inverses computed inside inner loop
-//
-// NOTE: 1/hx^2, 1/hy^2, 1/hz^2 and denom are recomputed at every
-// grid point rather than hoisted out of the loop.  This was the
-// original implementation before the constants were moved outside.
-// ============================================================
+
+
 void localJacobiSweep(const std::vector<double>&u,const std::vector<double>&f,
                       std::vector<double>&unew,int lx,int ly,int lz,
                       double hx,double hy,double hz,
@@ -213,9 +210,9 @@ void localJacobiSweep(const std::vector<double>&u,const std::vector<double>&f,
         }
 }
 
-// ============================================================
+
 // Residual — grid spacing inverses also recomputed in inner loop
-// ============================================================
+
 double localResidualSq(const std::vector<double>&u,const std::vector<double>&f,
                        int lx,int ly,int lz,double hx,double hy,double hz,
                        int iLo,int iHi,int jLo,int jHi,int kLo,int kHi)
@@ -239,9 +236,9 @@ double localResidualSq(const std::vector<double>&u,const std::vector<double>&f,
     return s;
 }
 
-// ============================================================
+
 // I/O (rank 0 only)
-// ============================================================
+
 void readForcingFile(const std::string&fn,int&Nx,int&Ny,int&Nz,std::vector<double>&f){
     std::ifstream fin(fn);
     if(!fin) throw std::runtime_error("Cannot open: "+fn);
@@ -263,9 +260,9 @@ void writeSolution(const std::string&fn,const std::vector<double>&u,
         fout<<i*hx<<" "<<j*hy<<" "<<k*hz<<" "<<u[i*Ny*Nz+j*Nz+k]<<"\n";
 }
 
-// ============================================================
+
 // Main
-// ============================================================
+
 int main(int argc,char*argv[]){
     MPI_Init(&argc,&argv);
     int rank,size;
@@ -390,7 +387,6 @@ int main(int argc,char*argv[]){
         u[idx(i,j,lz+1,LNY,LNZ)]=unew[idx(i,j,lz+1,LNY,LNZ)]=v;
     }
 
-    // ---------------------------------------------------------------
     // Jacobi iteration
     //
     // Inefficiencies retained from original development version:
@@ -400,7 +396,6 @@ int main(int argc,char*argv[]){
     //   - BC re-stamp before and after sweep
     //   - residual reduced twice per iteration
     //   - inner-loop divisions not hoisted
-    // ---------------------------------------------------------------
     double residual=0.; int iter=0;
     do{
         // Pre-sweep L-inf norm — added to catch divergence early

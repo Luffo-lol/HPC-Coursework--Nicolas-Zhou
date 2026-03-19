@@ -12,9 +12,9 @@
  * At start-up the rank's local arrays (u, unew, localF) are allocated
  * in device memory and initialised with cudaMemcpy.  Every iteration:
  *
- *   1. Halo exchange:   device → host (cudaMemcpy) for the six face
- *                       buffers, MPI send/recv as before, host → device.
- *   2. Jacobi sweep:    jacobiKernel<<<grid,block>>> writes unew on device.
+ *   1. Halo exchange:   device -> host (cudaMemcpy) for the six face
+ *                       buffers, MPI send/recv as before, host ->device.
+ *   2. Jacobi sweep:    jacobiKernel<<<grid,block>>>> writes unew on device.
  *   3. Swap:            device pointer swap (no data movement).
  *   4. Residual:        residualKernel<<<grid,block>>> + thrust::reduce
  *                       (or atomicAdd into a device scalar) for local sum.
@@ -65,9 +65,9 @@
 #include <iomanip>
 #include <algorithm>
 
-// ============================================================
+
 // CUDA error-checking macro
-// ============================================================
+
 #define CUDA_CHECK(call)                                                    \
     do {                                                                    \
         cudaError_t err = (call);                                           \
@@ -78,18 +78,18 @@
         }                                                                   \
     } while(0)
 
-// ============================================================
+
 // Block dimensions — tuned for 3-D stencils on modern GPUs.
 // 8×8×8 = 512 threads/block; occupancy is high for double-
 // precision stencils (register pressure is low: ~16 registers).
-// ============================================================
+
 #define BLOCK_X 8
 #define BLOCK_Y 8
 #define BLOCK_Z 8
 
-// ============================================================
+
 // Options
-// ============================================================
+
 class Options {
 public:
     bool        help    = false;
@@ -133,16 +133,16 @@ public:
     }
 };
 
-// ============================================================
+
 // Flat index: k fastest (row-major, same layout as CPU code)
-// ============================================================
+
 __host__ __device__ inline int idx(int i,int j,int k,int NY,int NZ){
     return i*NY*NZ + j*NZ + k;
 }
 
-// ============================================================
+
 // Test-case helpers (host only — used for initialisation)
-// ============================================================
+
 double exactSolution(int tc,double x,double y,double z){
     switch(tc){
         case 1: return x*x+y*y+z*z;
@@ -177,9 +177,9 @@ void decompose1D(int N,int P,int rank,int&start,int&count){
     count=base+(rank<rem?1:0);
 }
 
-// ============================================================
+
 // I/O helpers (rank 0 only)
-// ============================================================
+
 void readForcingFile(const std::string&fn,int&Nx,int&Ny,int&Nz,
                      std::vector<double>&f){
     std::ifstream fin(fn);
@@ -202,9 +202,9 @@ void writeSolution(const std::string&fn,const std::vector<double>&u,
         fout<<i*hx<<" "<<j*hy<<" "<<k*hz<<" "<<u[i*Ny*Nz+j*Nz+k]<<"\n";
 }
 
-// ============================================================
+
 // CUDA kernels
-// ============================================================
+
 
 /**
  * @brief Jacobi sweep kernel — one thread per interior grid point.
@@ -334,10 +334,10 @@ __global__ void unpackZKernel(double* u, const double* buf,
     u[idx(i, j, kHalo, NY, NZ)] = buf[i*(ly+2)+j];
 }
 
-// ============================================================
+
 // Host-side halo exchange
 // (device→host face copies, MPI, host→device)
-// ============================================================
+
 void exchangeHalos(
     double* d_u,                       // device array
     int lx, int ly, int lz,
@@ -372,7 +372,7 @@ void exchangeHalos(
     packZKernel<<<grdZ, blk2>>>(d_u, d_sZp, lx, ly, lz, lz);
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    // ── Copy faces device → host ───────────────────────────────
+    // ── Copy faces device ->host ───────────────────────────────
     // X faces (contiguous — direct pointer arithmetic)
     CUDA_CHECK(cudaMemcpy(sXm.data(),
         d_u + idx(1,  0, 0, NY, NZ), xFace*sizeof(double), cudaMemcpyDeviceToHost));
@@ -402,7 +402,7 @@ void exchangeHalos(
     MPI_Irecv(rZp.data(), zFace, MPI_DOUBLE, nbrZp, TAG, cart, &req[nr++]);
     MPI_Waitall(nr, req, MPI_STATUSES_IGNORE);
 
-    // ── Copy halos host → device ───────────────────────────────
+    // ── Copy halos host ->device ───────────────────────────────
     CUDA_CHECK(cudaMemcpy(d_u + idx(0,   0, 0, NY, NZ),
         rXm.data(), xFace*sizeof(double), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_u + idx(lx+1,0, 0, NY, NZ),
@@ -420,9 +420,9 @@ void exchangeHalos(
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-// ============================================================
+
 // Main
-// ============================================================
+
 int main(int argc, char* argv[])
 {
     MPI_Init(&argc, &argv);

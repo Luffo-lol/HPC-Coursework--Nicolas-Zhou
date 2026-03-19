@@ -10,7 +10,6 @@
 #SBATCH --error=poisson_scaling_%j.err
 #SBATCH --exclusive
 
-# =============================================================================
 # job-script.slr
 #
 # SLURM job script for the MPI Poisson solver strong and weak scaling study.
@@ -26,7 +25,6 @@
 # Results written to:
 #   strong_scaling_<jobid>.csv
 #   weak_scaling_<jobid>.csv
-# =============================================================================
 
 module purge
 module load mpi/openmpi
@@ -71,13 +69,9 @@ run_timed() {
     echo "$NP,$NX,$NY,$NZ,$WALL,${ITERS:-?},${RESID:-?}"
 }
 
-# =============================================================================
 # STRONG SCALING — fixed 128^3 grid, ranks 1..48
 # Decompose in x-direction where possible; use 3D decomposition for higher counts
-# =============================================================================
-echo "============================================================"
 echo " Strong scaling: 128^3 grid, epsilon=$EPSILON"
-echo "============================================================"
 
 declare -A STRONG_DECOMP
 STRONG_DECOMP[1]="1 1 1"
@@ -109,14 +103,10 @@ echo ""
 echo "Strong scaling results written to: $STRONG_CSV"
 echo ""
 
-# =============================================================================
 # WEAK SCALING — problem size grows with rank count
 # Base: 32^3 per rank  => N_per_dim = 32 * cbrt(P) rounded to nearest int
 # Decompose uniformly: Px = Py = Pz = cbrt(P) where possible
-# =============================================================================
-echo "============================================================"
 echo " Weak scaling: ~32^3 per rank, epsilon=$EPSILON"
-echo "============================================================"
 
 # N per rank: 32^3 = 32768 points each
 # Total N^3 = 32768 * P  =>  N = 32 * P^(1/3)
@@ -152,7 +142,5 @@ done
 echo ""
 echo "Weak scaling results written to: $WEAK_CSV"
 echo ""
-echo "============================================================"
 echo " Job complete.  Generate plots with:"
 echo "   python3 plot_scaling.py strong_scaling_${JOBID}.csv weak_scaling_${JOBID}.csv"
-echo "============================================================"

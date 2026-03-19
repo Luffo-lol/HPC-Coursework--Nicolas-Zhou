@@ -1,4 +1,4 @@
-# =============================================================================
+
 # optimization/Makefile
 #
 # Builds all three progressive optimisation variants.
@@ -30,7 +30,6 @@
 #       └── plot_speedup.py           (draw speedup_plot.png + walltime_plot.png)
 #
 # Targets
-# -------
 #   all           Build opt1 + opt2 + opt3 + baseline          [DEFAULT]
 #   opt1          Build poisson-mpi-opt1 only
 #   opt2          Build poisson-mpi-opt2 only
@@ -44,7 +43,7 @@
 #   make all
 #   bash run_benchmark.sh        # writes timing_results.csv
 #   python3 plot_speedup.py      # writes speedup_plot.png + walltime_plot.png
-# =============================================================================
+
 
 SHELL    := /bin/bash
 CXX      := mpic++
@@ -87,9 +86,9 @@ opt3: $(OPT3_BIN)
 $(OPT3_BIN): $(OPT3_SRC)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-# =============================================================================
+
 # Correctness - all variants produce the same answer on test 1 (serial)
-# =============================================================================
+
 verify: all
 	@echo ""
 	@echo "=== Verifying baseline (poisson-mpi.cpp) ==="
@@ -103,13 +102,12 @@ verify: all
 	@echo ""
 	@echo "All variants verified."
 
-# =============================================================================
+
 # Quick benchmark - run all 4 at NP ranks and print wall times
 # For full CSV + plots use:  bash run_benchmark.sh
-# =============================================================================
+
 benchmark: all
 	@echo ""
-	@echo "=================================================================="
 	@echo " Benchmark: test $(TC)  |  $(NP) MPI rank(s)  |  epsilon=$(EPS)"
 	@echo "=================================================================="
 	@echo ""
@@ -127,7 +125,6 @@ benchmark: all
 	@echo ""
 	@echo "=================================================================="
 	@echo " For CSV output + plots:  bash run_benchmark.sh"
-	@echo "=================================================================="
 
 clean:
 	rm -f $(ALL_BINS) solution.txt timing_results.csv

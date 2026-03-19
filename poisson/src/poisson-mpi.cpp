@@ -52,6 +52,8 @@
  *                  -o poisson-mpi-opt3 poisson-mpi-opt3.cpp
  * Run:      OMP_NUM_THREADS=6 mpirun -n 8 ./poisson-mpi-opt3 --test 2 \
  *                  --Px 2 --Py 2 --Pz 2
+ * 
+ * @author Nicolas Zhou
  */
 
 #include <mpi.h>
@@ -65,9 +67,9 @@
 #include <iomanip>
 #include <algorithm>
 
-// ============================================================
+
 // Options (unchanged)
-// ============================================================
+
 class Options {
 public:
     bool        help    = false;
@@ -147,9 +149,9 @@ void decompose1D(int N,int P,int rank,int&start,int&count){
     count=base+(rank<rem?1:0);
 }
 
-// ============================================================
+
 // Halo exchange (same split post/finish as opt1)
-// ============================================================
+
 struct HaloBuffers {
     std::vector<double> sYm,sYp,rYm,rYp;
     std::vector<double> sZm,sZp,rZm,rZp;
@@ -208,9 +210,9 @@ void finishHaloExchange(std::vector<double>&u,int lx,int ly,int lz,HaloBuffers&h
     }
 }
 
-// ============================================================
+
 // OPT3a: Raw-pointer Jacobi sweep with per-(i,j) base pointers
-// ============================================================
+
 void jacobiRange(const double* __restrict__ u_ptr,
                  const double* __restrict__ f_ptr,
                        double* __restrict__ un_ptr,
@@ -243,9 +245,9 @@ void jacobiRange(const double* __restrict__ u_ptr,
       }
 }
 
-// ============================================================
+
 // OPT3a: Raw-pointer residual
-// ============================================================
+
 double localResidualSq(const double* __restrict__ u_ptr,
                        const double* __restrict__ f_ptr,
                        int lx,int ly,int lz,
